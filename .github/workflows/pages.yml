@@ -10,7 +10,7 @@ permissions:
   id-token: write
 
 env:
-  OWNER: gongtiejing            # <== 改成你的用户名/组织
+  OWNER: enxpower            # <== 改成你的用户名/组织
   ENGINE_REPO: ems-engine       # 私库名
   ENGINE_TAG: latest            # 固定取 latest
 
