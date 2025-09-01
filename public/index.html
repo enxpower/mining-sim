@@ -31,7 +31,7 @@
   .dash2{background:linear-gradient(90deg,#000 0 30%,transparent 30% 55%,#000 55% 100%)}
   .stack{position:relative}
 
-  /* Footer (as requested) */
+  /* Footer */
   .site-footer{margin-top:16px;padding:16px 12px;background:#111827;color:#d1d5db;border-top:1px solid #1f2937;border-radius:10px}
   .site-footer .foot-row{font-size:13px;line-height:1.6}
   .site-footer a{color:#93c5fd;text-decoration:none}
@@ -203,14 +203,20 @@
   </div>
 </footer>
 
+<!-- ===== Scripts (only once, placed before </body>) ===== -->
+
+<!-- 如需启用私有引擎，先将 ems-engine.min.js 放到 public/vendor/ 再解除下面一行注释 -->
+<!-- <script type="module" src="./vendor/ems-engine.min.js"></script> -->
+
 <script type="module">
-  // Bootstrapping UI
+  // 从 public/ 到 src/ 的正确路径是 ../src/xxx.js
   import { i18n, setLang, applyText } from '../src/i18n.js';
   import { setupUI } from '../src/ui.js';
 
+  // 页脚年份
   document.getElementById('copyYear').textContent = `© ${new Date().getFullYear()}`;
 
-  // default English; clicking toggles to zh/en
+  // 语言切换
   const langBtn = document.getElementById('langBtn');
   let current = 'en';
   applyText(current);
@@ -220,33 +226,10 @@
     applyText(current);
   };
 
-  setupUI(); // wire events and draw loops
+  // DOM 就绪后再绑定，避免偶发 race
+  window.addEventListener('DOMContentLoaded', () => {
+    setupUI();
+  });
 </script>
-
-<!-- Engine bundle from private repo -->
-<script type="module" src="./vendor/ems-engine.min.js"></script>
 </body>
 </html>
-<!-- 放在 index.html 的尾部，保持其它内容不变 -->
-<!-- UI & 多语言支持 (相对路径) -->
-<script type="module">
-  import { i18n, setLang, applyText } from "./src/i18n.js";
-  import { setupUI } from "./src/ui.js";
-
-  document.getElementById("copyYear").textContent = `© ${new Date().getFullYear()}`;
-
-  const langBtn = document.getElementById("langBtn");
-  let current = "en";
-  applyText(current);
-  langBtn.onclick = () => {
-    current = (current === "en" ? "zh" : "en");
-    setLang(current);
-    applyText(current);
-  };
-
-  setupUI(); // 绑定按钮事件和绘图
-</script>
-
-<!-- 引擎 bundle (同样相对路径) -->
-<script type="module" src="./vendor/ems-engine.min.js"></script>
-
