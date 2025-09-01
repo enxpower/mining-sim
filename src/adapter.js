@@ -1,65 +1,86 @@
-// Read DOM inputs -> engine config object.
+// src/adapter.js
+// Bridge between UI and engine bundle (ems-engine.min.js).
+// It guarantees start/pause/reset and tick callback are always available.
 
-export function readConfig() {
-  const g = id => document.getElementById(id).value;
+const ENGINE_PATH = '../public/vendor/ems-engine.min.js';
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 1800);
+}
+
+export async function createAdapter(configFromUI = {}) {
+  // 1) Load engine bundle
+  let engineMod = null;
+  try {
+    engineMod = await import(`${ENGINE_PATH}?v=${Date.now()}`);
+  } catch (e) {
+    console.error('[adapter] failed to load engine bundle:', e);
+    toast('Engine bundle failed to load. Check public/vendor/ems-engine.min.js');
+    // Provide a no-op shim so UI 不至于崩
+    return makeShim();
+  }
+
+  // 2) Obtain factory (兼容默认导出/命名导出两种写法)
+  const factory =
+    engineMod.createEngine ||
+    engineMod.default?.createEngine ||
+    engineMod.default ||
+    null;
+
+  if (!factory || typeof factory !== 'function') {
+    console.error('[adapter] engine factory not found. Export createEngine() or default.');
+    toast('Engine factory not found in bundle');
+    return makeShim();
+  }
+
+  // 3) Create engine instance
+  const engine = factory(configFromUI);
+
+  // 4) Normalize interface
+  const api = {
+    start: () => engine.start?.(),
+    pause: () => engine.pause?.(),
+    reset: () => engine.reset?.(),
+    onTick: (cb) => engine.onTick?.(cb),
+    // 用于 UI 侧日志与 KPI
+    getState: () => engine.getState?.()
+  };
+
+  // 基本健壮性
+  ['start','pause','reset','onTick','getState'].forEach(k=>{
+    if (typeof api[k] !== 'function' && k !== 'getState') {
+      console.warn(`[adapter] engine API missing: ${k}()`);
+    }
+  });
+
+  return api;
+}
+
+// --- No-op fallback (engine bundle missing) ---
+function makeShim(){
+  let ticking = false, timer = null;
+  let tickCb = ()=>{};
+  const fakeState = {
+    t: 0, hz: 60, soc: 70, pv: 0, wind: 0, load: 0, diesel: 0, bess: 0
+  };
   return {
-    // time & system
-    horizonHours: +g('simHours'),
-    dt: +g('dt'),
-    f0: +g('f0'),
-    D: +g('Dsys'),
-    alphaLoad: +g('alphaLoad') / 100,
-
-    // geo
-    latDeg: +g('latDeg'),
-    dayOfYear: +g('doy'),
-    pvSoiling: +g('pvSoil'),
-
-    // load
-    PloadBase: +g('Pload'),
-    PloadVar: +g('loadVar'),
-
-    // pv
-    PpvMax: +g('PpvMax'),
-    pvShape: +g('pvShape'),
-    pvCloud: +g('pvCloud'),
-
-    // wind
-    PwindMax: +g('PwindMax'),
-    windMean: +g('windMean'),
-    windVar: +g('windVar'),
-
-    // diesel
-    dg33n: +g('dg33n'),
-    dg12n: +g('dg12n'),
-    RdgPct: +g('Rdg'),
-    dgMinPu: +g('dgMinPu'),
-    rampUp: +g('rampUp'),
-    rampDn: +g('rampDn'),
-    dgDelay: +g('dgDelay'),
-    dgHyst: +g('dgHyst'),
-    allowDieselOff: (document.getElementById('allowDieselOff').value === 'true'),
-
-    // bess
-    PbMax: +g('PbMax'),
-    EbMax: +g('EbMax'),
-    soc0: +g('soc0'),
-    RvsgPct: +g('Rvsg'),
-    Hvsg: +g('Hvsg'),
-    socTarget: +g('socTarget') / 100,
-    socBand: +g('socBand') / 100,
-    femg: +g('femg'),
-    overMul: +g('overMul'),
-    overSec: +g('overSec'),
-
-    // protection
-    rocMax: +g('rocMax'),
-    kof1: +g('kof1'),
-    kof2: +g('kof2'),
-    of1f: +g('of1f'),
-    of1t: +g('of1t'),
-    of2f: +g('of2f'),
-    of2t: +g('of2t'),
-    reclose: +g('reclose')
+    start(){
+      if (ticking) return;
+      ticking = true;
+      timer = setInterval(()=>{
+        // 生成轻微波动，UI 能看到曲线
+        fakeState.t += 1;
+        fakeState.hz = 60 + Math.sin(fakeState.t/7)*0.05;
+        tickCb({...fakeState});
+      }, 1000);
+    },
+    pause(){ ticking=false; clearInterval(timer); },
+    reset(){ this.pause(); fakeState.t = 0; },
+    onTick(cb){ tickCb = cb; },
+    getState(){ return {...fakeState}; }
   };
 }
