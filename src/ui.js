@@ -129,27 +129,29 @@ function readCfgFromUI(){
     pvCloud: num('pvCloud', 0.35),
     latDeg: num('lat', 25),
     dayOfYear: num('doy', 172),
+    pvSoiling: num('pvSoil', 0.9),        // ← 新增：与页面一致
 
-    // Wind（点号路径为嵌套字段）
+    // Wind
     'wind.Pmax': num('PwindMax', 6),
     'wind.vmean': num('windMean', 8),
     'wind.vvar':  num('windVar', 0.4),
 
-    // Diesel
+    // Diesel（单位修正 & 最小负荷）
     'dg.allowOff': boolFromStr('allowDieselOff', true),
-    'dg.Rdg': num('Rdg', 0.05),
+    'dg.Rdg': num('Rdg', 4)/100,          // ← 关键修复：% → pu
     'dg.rampUp': num('rampUp', 0.2),
     'dg.rampDn': num('rampDn', 1.0),
     'dg.delay': num('dgDelay', 600),
     'dg.hyst': num('dgHyst', 1.5),
     'dg.n33': num('dg33n', 4),
     'dg.n12': num('dg12n', 1),
+    'dg.minPu': num('dgMinPu', 0.35),     // ← 新增：页面有该字段
 
     // BESS
     'bess.Pmax': num('PbMax', 8),
     'bess.Emax': num('EbMax', 20),
     'bess.soc0': num('soc0', 60)/100,
-    'bess.R': num('Rvsg', 3)/100,           // % → pu
+    'bess.R': num('Rvsg', 3)/100,
     'bess.Hv': num('Hvsg', 6.0),
     'bess.socTarget': num('socTarget', 55)/100,
     'bess.socBand': num('socBand', 10)/100,
@@ -168,6 +170,7 @@ function readCfgFromUI(){
     reclose: 30
   };
 }
+
 
 // 将 'a.b' 形式的键嵌套到对象里
 function mergeDotPaths(flat){
