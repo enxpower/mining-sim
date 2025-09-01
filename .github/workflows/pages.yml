@@ -1,4 +1,5 @@
 name: Build & Deploy Pages
+
 on:
   push:
     branches: [ main ]
@@ -9,11 +10,9 @@ permissions:
   pages: write
   id-token: write
 
-env:
-  OWNER: enxpower                 # ← 改成你的组织/账号
-  ENGINE_REPO: ems-engine         # ← 私库名
-  ENGINE_TAG: latest              # ← 取 latest release
-  ENGINE_PAT: ${{ secrets.ENGINE_PAT }}  # ← PAT，需要有读私库 release 权限
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -22,40 +21,50 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1) 把 src 复制进 public/src，避免生产环境 ../src/*.js 404
-      - name: Bundle src into public
+      # 1) 复制源代码到 public/src（生产环境用相对 ./src/ 路径）
+      - name: Bundle src into public/src
         run: |
-          rm -rf public/src
           mkdir -p public/src
-          cp -R src/* public/src/
+          rsync -a --delete src/ public/src/ || true
 
-      # 2) 准备 vendor 目录并下载引擎产物（私库 latest release）
-      - name: Prepare vendor
+      # 2) 准备 vendor 目录（放 ems-engine.min.js）
+      - name: Ensure vendor dir
         run: mkdir -p public/vendor
 
-      - name: Download engine bundle
-        run: |
-          echo "Downloading engine from ${OWNER}/${ENGINE_REPO}@${ENGINE_TAG}"
-          gh release download "${ENGINE_TAG}" \
-            --repo "${OWNER}/${ENGINE_REPO}" \
-            --pattern "ems-engine.min.js" \
-            --dir "public/vendor"
-          ls -l public/vendor
+      # 3) （可选）下载私库引擎产物；若没有 SECRET 或下载失败，跳过不报错
+      - name: Try download private engine (optional)
+        if: ${{ secrets.ENGINE_PAT != '' }}
         env:
-          GH_TOKEN: ${{ env.ENGINE_PAT }}
+          GH_TOKEN: ${{ secrets.ENGINE_PAT }}   # PAT: 需要对私库有 read:packages / read:repo 或至少 read releases
+          ENGINE_OWNER: enxpower               # ← 如有不同，请改成你的组织/账号
+          ENGINE_REPO: ems-engine              # ← 私库名
+          ENGINE_TAG: latest                   # ← 取 latest release
+        run: |
+          set -e
+          echo "Attempting to fetch ${ENGINE_OWNER}/${ENGINE_REPO}@${ENGINE_TAG}"
+          # 下载失败不会阻断流程（例如 release 不存在 / 权限不足）
+          gh release download "${ENGINE_TAG}" \
+            --repo "${ENGINE_OWNER}/${ENGINE_REPO}" \
+            --pattern "ems-engine.min.js" \
+            --dir "public/vendor" || echo "⚠️ Engine asset not found or no permission. Continuing without it."
+          ls -l public/vendor || true
 
-      # 3) 上传静态站点工件
-      - name: Upload artifact (static site)
+      # 4) 配置 Pages，并上传静态站点工件（public）
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact (public)
         uses: actions/upload-pages-artifact@v3
         with:
           path: public
 
   deploy:
-    runs-on: ubuntu-latest
     needs: build
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - id: deployment
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
