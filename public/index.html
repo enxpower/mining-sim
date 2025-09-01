@@ -68,7 +68,7 @@
       <option value="africa">Africa (φ≈10°N)</option>
       <option value="andes">Andes (φ≈20°S)</option>
     </select>
-    <label id="lblLat">Latitude φ (°N + / °S −)</label><input id="latDeg" type="number" value="25" step="0.5" min="-75" max="75">
+    <label id="lblLat">Latitude φ (°N + / °S −)</label><input id="lat" type="number" value="25" step="0.5" min="-75" max="75">
     <label id="lblDoy">Day-of-year (1–365)</label><input id="doy" type="number" value="172" step="1" min="1" max="365">
     <label id="lblSoil">PV soiling (0.7–1)</label><input id="pvSoil" type="number" value="0.9" step="0.01" min="0.7" max="1">
   </div>
@@ -203,15 +203,15 @@
   </div>
 </footer>
 
-<!-- ===== Scripts (only once, placed before </body>) ===== -->
+<!-- ===== Scripts (order matters) ===== -->
 
-<!-- 如需启用私有引擎，先将 ems-engine.min.js 放到 public/vendor/ 再解除下面一行注释 -->
-<!-- <script type="module" src="./vendor/ems-engine.min.js"></script> -->
+<!-- 引擎模块（构建后产物）：先加载，使其把 createEngine 暴露到 window.emsEngine -->
+<script type="module" src="./vendor/ems-engine.min.js"></script>
 
 <script type="module">
-  // 从 public/ 到 src/ 的正确路径是 ../src/xxx.js
-  import { i18n, setLang, applyText } from '../src/i18n.js';
-  import { setupUI } from '../src/ui.js';
+  // 生产部署（GitHub Pages）推荐将 src/ 复制进 public/src/，因此用 ./src/xxxx.js
+  import { i18n, setLang, applyText } from './src/i18n.js';
+  import { setupUI } from './src/ui.js';
 
   // 页脚年份
   document.getElementById('copyYear').textContent = `© ${new Date().getFullYear()}`;
@@ -226,7 +226,7 @@
     applyText(current);
   };
 
-  // DOM 就绪后再绑定，避免偶发 race
+  // DOM 就绪后再绑定
   window.addEventListener('DOMContentLoaded', () => {
     setupUI();
   });
