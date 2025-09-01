@@ -10,9 +10,9 @@ permissions:
   id-token: write
 
 env:
-  OWNER: enxpower            # <== 改成你的用户名/组织
-  ENGINE_REPO: ems-engine       # 私库名
-  ENGINE_TAG: latest            # 固定取 latest
+  OWNER: gongtiejing         # ← 改成你的账号/组织
+  ENGINE_REPO: ems-engine    # 私库名
+  ENGINE_TAG: latest         # 固定取 latest
 
 jobs:
   build:
@@ -21,14 +21,17 @@ jobs:
       - name: Checkout public repo
         uses: actions/checkout@v4
 
-      - name: Setup gh CLI
-        uses: cli/cli@v2
-        with:
-          version: latest
+      - name: Ensure gh CLI available
+        run: |
+          if ! command -v gh >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y gh
+          fi
+          gh --version
 
       - name: Download engine bundle from private repo release
         env:
-          GH_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
+          GH_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}   # 公库里配置的 PAT（可读私库）
         run: |
           mkdir -p public/vendor
           gh release download "$ENGINE_TAG" \
