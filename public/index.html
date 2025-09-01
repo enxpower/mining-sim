@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Off-Grid Mining Microgrid Simulator</title>
+<link rel="icon" href="data:,">
+<style>
+  :root{--fg:#111;--muted:#666;--box:#d1d5db}
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,"Noto Sans",sans-serif;color:var(--fg);margin:14px}
+  h1{font-size:18px;margin:0 0 8px}
+  .row{display:flex;flex-wrap:wrap;gap:12px;margin:10px 0}
+  .card{border:1px solid var(--box);border-radius:10px;padding:12px;background:#fff;flex:1 1 320px}
+  label{display:block;font-size:12px;margin:6px 0 3px}
+  input[type=number],input[type=range],select{width:100%;padding:7px 9px;border:1px solid #cbd5e1;border-radius:8px}
+  input[type=range]{height:32px;padding:0}
+  .btn{padding:8px 12px;border:1px solid #111;border-radius:8px;background:#fff;cursor:pointer}
+  .btn.secondary{border-color:#666;color:#333}
+  .kv{font-family:ui-monospace,Menlo,Consolas,monospace}
+  canvas{width:100%;height:280px;background:#fff;border:1px solid #eee;border-radius:10px}
+  .kpi{display:flex;gap:10px;flex-wrap:wrap}
+  .kpi .box{border:1px solid var(--box);border-radius:10px;padding:8px 10px;min-width:150px}
+  .kpi .box b{display:block;font-size:12px;color:#374151}
+  .kpi .box span{display:block;font-size:18px;margin-top:2px}
+  #log{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;max-height:180px;overflow:auto;border:1px solid #eee;border-radius:8px;padding:8px;background:#fafafa;white-space:pre-wrap;line-height:1.35}
+  .legend{position:absolute; right:14px; top:10px; background:rgba(255,255,255,0.92); border:1px solid #e5e7eb; border-radius:8px; padding:6px 8px; font-size:12px}
+  .legend-row{display:flex;align-items:center;gap:6px;margin:2px 0}
+  .swatch{width:16px;height:3px;background:#000}
+  .dash{background:linear-gradient(90deg,#000 0 40%,transparent 40% 60%,#000 60% 100%)}
+  .dash2{background:linear-gradient(90deg,#000 0 30%,transparent 30% 55%,#000 55% 100%)}
+  .stack{position:relative}
+
+  /* Footer (as requested) */
+  .site-footer{margin-top:16px;padding:16px 12px;background:#111827;color:#d1d5db;border-top:1px solid #1f2937;border-radius:10px}
+  .site-footer .foot-row{font-size:13px;line-height:1.6}
+  .site-footer a{color:#93c5fd;text-decoration:none}
+  .site-footer .foot-icons{margin-top:8px;display:flex;gap:12px}
+  .site-footer .foot-icons a:hover svg{fill:#60a5fa}
+</style>
+</head>
+<body>
+<h1 id="title">Off-Grid Mining Microgrid — 35 kV</h1>
+
+<div class="row">
+  <div class="card">
+    <b id="lblGlobal">Global</b>
+    <label id="lblHours">Simulation length (hours)</label><input id="simHours" type="number" value="24" step="1" min="1">
+    <label id="lblDt">Timestep dt (s)</label><input id="dt" type="number" value="0.5" step="0.1" min="0.05">
+    <label id="lblF0">Nominal frequency f₀ (Hz)</label><input id="f0" type="number" value="60" step="1" min="40" max="65">
+    <label id="lblD">System damping D (pu)</label><input id="Dsys" type="number" value="2.2" step="0.1">
+    <label id="lblAlpha">Load freq. coeff α (%/Hz)</label><input id="alphaLoad" type="number" value="2.0" step="0.1">
+    <div style="margin-top:8px">
+      <button class="btn" id="startBtn">▶ Start</button>
+      <button class="btn secondary" id="pauseBtn">⏸ Pause</button>
+      <button class="btn secondary" id="resetBtn">↺ Reset</button>
+      <button class="btn secondary" id="langBtn">中文</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <b id="lblGeo">Geo/Insulation</b>
+    <label id="lblPreset">Preset</label>
+    <select id="geoPreset">
+      <option value="custom" selected>Custom</option>
+      <option value="arctic">Arctic (φ≈70°N)</option>
+      <option value="desert">Desert (φ≈25°N)</option>
+      <option value="africa">Africa (φ≈10°N)</option>
+      <option value="andes">Andes (φ≈20°S)</option>
+    </select>
+    <label id="lblLat">Latitude φ (°N + / °S −)</label><input id="latDeg" type="number" value="25" step="0.5" min="-75" max="75">
+    <label id="lblDoy">Day-of-year (1–365)</label><input id="doy" type="number" value="172" step="1" min="1" max="365">
+    <label id="lblSoil">PV soiling (0.7–1)</label><input id="pvSoil" type="number" value="0.9" step="0.01" min="0.7" max="1">
+  </div>
+
+  <div class="card">
+    <b id="lblLoadRes">Load / Renewables</b>
+    <label id="lblLoadBase">Load base (MW)</label><input id="Pload" type="number" value="12" step="0.5" min="0">
+    <label id="lblLoadVar">Load variability (MW)</label><input id="loadVar" type="number" value="1.2" step="0.2" min="0">
+    <hr>
+    <label id="lblPpvMax">PV limit (MW)</label><input id="PpvMax" type="number" value="30" step="1" min="0">
+    <label id="lblPvShape">PV day shape (1–3)</label><input id="pvShape" type="number" value="1.5" step="0.1" min="1" max="3">
+    <label id="lblPvCloud">Cloudiness (0–1)</label><input id="pvCloud" type="number" value="0.35" step="0.05" min="0" max="1">
+    <hr>
+    <label id="lblPwindMax">Wind limit (MW)</label><input id="PwindMax" type="number" value="6" step="1" min="0">
+    <label id="lblWindMean">Wind mean (m/s)</label><input id="windMean" type="number" value="8" step="0.5" min="0">
+    <label id="lblWindVar">Wind variability (0–1)</label><input id="windVar" type="number" value="0.4" step="0.05" min="0" max="1">
+  </div>
+
+  <div class="card">
+    <b id="lblDiesel">Diesel (VF)</b>
+    <label id="lblDg33">3.3 MW online (0–6)</label><input id="dg33n" type="number" value="3" step="1" min="0" max="6">
+    <label id="lblDg12">1.25 MW online (0–2)</label><input id="dg12n" type="number" value="0" step="1" min="0" max="2">
+    <label id="lblRdg">Droop R<sub>P</sub> (%)</label><input id="Rdg" type="number" value="4" step="0.5">
+    <label id="lblMinPu">Min loading (pu)</label><input id="dgMinPu" type="number" value="0.35" step="0.05">
+    <label id="lblRampUp">Ramp up (MW/s)</label><input id="rampUp" type="number" value="0.2" step="0.05">
+    <label id="lblRampDn">Ramp down (MW/s)</label><input id="rampDn" type="number" value="1.0" step="0.1">
+    <label id="lblDelay">Start/stop delay (s)</label><input id="dgDelay" type="number" value="600" step="30">
+    <label id="lblHyst">Hysteresis (MW)</label><input id="dgHyst" type="number" value="1.5" step="0.1">
+    <label id="lblAllowOff">Allow all-off</label>
+    <select id="allowDieselOff"><option value="false" selected>No</option><option value="true">Yes</option></select>
+  </div>
+
+  <div class="card">
+    <b id="lblBess">BESS (VSG)</b>
+    <label>P<sub>max</sub> (MW)</label><input id="PbMax" type="number" value="8" step="0.5" min="0">
+    <label>E<sub>max</sub> (MWh)</label><input id="EbMax" type="number" value="20" step="1" min="0">
+    <label id="lblSoc0">Initial SOC (%)</label><input id="soc0" type="number" value="60" step="1" min="0" max="100">
+    <label id="lblRvsg">Droop R<sub>P</sub> (%)</label><input id="Rvsg" type="number" value="3" step="0.5">
+    <label id="lblHvsg">Virtual inertia H (s)</label><input id="Hvsg" type="number" value="6.0" step="0.1">
+    <label id="lblSocTar">SOC target / band (%/%):</label>
+    <div class="row" style="gap:8px"><input id="socTarget" type="number" value="55"><input id="socBand" type="number" value="10"></div>
+    <label id="lblEmg">Emergency |Δf| / Mult / Sec (Hz/x/s)</label>
+    <div class="row" style="gap:8px"><input id="femg" type="number" value="0.2" step="0.05"><input id="overMul" type="number" value="1.4" step="0.1"><input id="overSec" type="number" value="8" step="1"></div>
+  </div>
+
+  <div class="card">
+    <b id="lblProt">Protection / Limits</b>
+    <label>RoCoF limit (Hz/s)</label><input id="rocMax" type="number" value="0.9" step="0.1">
+    <label>Hz–W k1(60.2–60.5)/k2(&gt;60.5)</label>
+    <div class="row" style="gap:8px"><input id="kof1" type="number" value="0.5" step="0.1"><input id="kof2" type="number" value="2.0" step="0.1"></div>
+    <label>OF1 f (Hz) / time (s)</label>
+    <div class="row" style="gap:8px"><input id="of1f" type="number" value="60.5" step="0.1"><input id="of1t" type="number" value="10" step="1"></div>
+    <label>OF2 f (Hz) / time (s)</label>
+    <div class="row" style="gap:8px"><input id="of2f" type="number" value="61.0" step="0.1"><input id="of2t" type="number" value="0.2" step="0.1"></div>
+    <label>Reclose (s)</label><input id="reclose" type="number" value="30" step="1">
+  </div>
+</div>
+
+<div class="row">
+  <div class="card" style="flex:1 1 420px">
+    <b id="lblWindow">View window</b>
+    <label id="lblWinLen">Window length (hours)</label><input id="viewHours" type="number" value="4" step="0.5" min="0.5">
+    <label id="lblWinStart">Window start (hours)</label><input id="viewStart" type="range" min="0" max="20" step="0.1" value="0">
+    <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+      <label style="display:flex;align-items:center;gap:6px"><input id="followLive" type="checkbox" checked> <span id="lblFollow">Follow live</span></label>
+      <span class="kv" id="viewLabel">[0.0, 4.0] h</span>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="card stack" style="flex:2 1 560px">
+    <b id="lblPplot">Power (MW) · Window</b>
+    <div class="legend">
+      <div class="legend-row"><div class="swatch" style="background:#E69F00"></div><span>PV</span></div>
+      <div class="legend-row"><div class="swatch dash2" style="background-image:linear-gradient(90deg,#D55E00 0 30%,transparent 30% 55%,#D55E00 55% 100%)"></div><span>Wind</span></div>
+      <div class="legend-row"><div class="swatch" style="background:#374151"></div><span id="lgLoad">Load</span></div>
+      <div class="legend-row"><div class="swatch" style="background:#0072B2"></div><span>Diesel</span></div>
+      <div class="legend-row"><div class="swatch dash" style="background-image:linear-gradient(90deg,#009E73 0 40%,transparent 40% 60%,#009E73 60% 100%)"></div><span>BESS (+dis/−ch)</span></div>
+    </div>
+    <canvas id="pPlot"></canvas>
+  </div>
+
+  <div class="card stack" style="flex:1 1 340px">
+    <b id="lblFplot">Frequency (Hz) / SOC (%) · Window</b>
+    <div class="legend">
+      <div class="legend-row"><div class="swatch" style="background:#6A3D9A"></div><span>Freq</span></div>
+      <div class="legend-row"><div class="swatch dash" style="background-image:linear-gradient(90deg,#009E73 0 40%,transparent 40% 60%,#009E73 60% 100%)"></div><span>SOC</span></div>
+      <div class="legend-row"><div class="swatch" style="background:#9ca3af;height:2px;width:18px"></div><span>f₀=60 Hz baseline</span></div>
+    </div>
+    <canvas id="fPlot"></canvas>
+    <div id="live" class="kv" style="margin-top:6px"></div>
+  </div>
+</div>
+
+<div class="card">
+  <b id="lblKpi">KPIs & Log</b>
+  <div class="kpi" id="kpiRow">
+    <div class="box"><b id="kpiFuelB">Fuel used</b><span id="kpiFuel">0 L</span></div>
+    <div class="box"><b id="kpiFuelBaseB">Fuel baseline</b><span id="kpiFuelBase">0 L</span></div>
+    <div class="box"><b id="kpiFuelSaveB">Fuel saved</b><span id="kpiFuelSave">0 L</span></div>
+    <div class="box"><b id="kpiREB">Renewable share</b><span id="kpiRE">0%</span></div>
+    <div class="box"><b id="kpiPVgenB">PV energy</b><span id="kpiPVgen">0 MWh</span></div>
+    <div class="box"><b id="kpiWDgenB">Wind energy</b><span id="kpiWDgen">0 MWh</span></div>
+    <div class="box"><b id="kpiCurtB">Curtailment</b><span id="kpiCurt">0 MWh</span></div>
+    <div class="box"><b id="kpiN1B">N−1 check</b><span id="kpiN1">OK</span></div>
+    <div class="box"><b id="kpiWinB">Window</b><span id="kpiWin">—</span></div>
+  </div>
+  <div id="log"></div>
+</div>
+
+<!-- Footer -->
+<footer class="site-footer">
+  <div class="foot-row">
+    <span id="copyYear"></span> Energize Solutions Inc. – All rights reserved.
+  </div>
+  <div class="foot-row">
+    Powered by GitHub Pages | Contact:
+    <a href="mailto:info@energizeos.com">info@energizeos.com</a>
+  </div>
+  <div class="foot-icons">
+    <a href="https://www.linkedin.com/in/gongtiejing" target="_blank" aria-label="LinkedIn" title="LinkedIn">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="#cbd5e1">
+        <path d="M4.98 3.5C4.98 4.88 3.86 6 2.5 6S0 4.88 0 3.5 1.12 1 2.5 1s2.48 1.12 2.48 2.5zM.5 8h4V23h-4V8zm7 0h3.84v2.05h.06c.53-1 1.83-2.05 3.76-2.05 4.02 0 4.76 2.65 4.76 6.09V23h-4v-6.67c0-1.59-.03-3.63-2.21-3.63-2.22 0-2.56 1.73-2.56 3.52V23h-4V8z"/>
+      </svg>
+    </a>
+    <a href="https://github.com/gongtiejing/mining" target="_blank" aria-label="GitHub" title="GitHub">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="#cbd5e1">
+        <path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.94c.58.11.8-.25.8-.56v-2.04c-3.2.7-3.88-1.38-3.88-1.38-.53-1.35-1.3-1.71-1.3-1.71-1.06-.73.08-.72.08-.72 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.73 1.27 3.4.97.11-.76.41-1.27.74-1.56-2.55-.29-5.23-1.28-5.23-5.7 0-1.26.45-2.29 1.2-3.1-.12-.29-.52-1.47.11-3.06 0 0 .98-.31 3.2 1.18.93-.26 1.93-.39 2.93-.39s2 .13 2.93.39c2.22-1.49 3.2-1.18 3.2-1.18.63 1.59.23 2.77.11 3.06.75.81 1.2 1.84 1.2 3.1 0 4.43-2.68 5.41-5.24 5.69.42.36.79 1.07.79 2.17v3.22c0 .31.22.68.81.56A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z"/>
+      </svg>
+    </a>
+  </div>
+</footer>
+
+<script type="module">
+  // Bootstrapping UI
+  import { i18n, setLang, applyText } from '../src/i18n.js';
+  import { setupUI } from '../src/ui.js';
+
+  document.getElementById('copyYear').textContent = `© ${new Date().getFullYear()}`;
+
+  // default English; clicking toggles to zh/en
+  const langBtn = document.getElementById('langBtn');
+  let current = 'en';
+  applyText(current);
+  langBtn.onclick = () => {
+    current = (current === 'en' ? 'zh' : 'en');
+    setLang(current);
+    applyText(current);
+  };
+
+  setupUI(); // wire events and draw loops
+</script>
+
+<!-- Engine bundle from private repo -->
+<script type="module" src="./vendor/ems-engine.min.js"></script>
+</body>
+</html>
