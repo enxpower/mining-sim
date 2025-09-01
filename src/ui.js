@@ -1,208 +1,286 @@
 // src/ui.js
-// UI layout + charts + windowing + button feedback
+// Wires the fixed HTML layout you provided, draws with Canvas2D (no Chart.js).
+// If private engine bundle (vendor/ems-engine.min.js) is missing,
+// we run a lightweight shim so the page still works.
 
-import { createAdapter } from './adapter.js';
+// ---------- utilities ----------
+const $ = (id) => document.getElementById(id);
+const kv = (n, d=2) => Number.isFinite(n) ? n.toFixed(d) : '0';
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 
-const colors = {
-  pv:'#E69F00',             // orange
-  wind:'#D55E00',           // vermillion
-  load:'#000000',           // black
-  diesel:'#0072B2',         // blue
-  bess:'#009E73',           // green
-  freq:'#6A5ACD',           // slate
-  soc:'#2E8B57',            // sea green
-  dotted:'#9aa4b2'
+// palette (color-blind friendly)
+const COL = {
+  pv: '#E69F00', wind: '#D55E00', load: '#374151',
+  diesel: '#0072B2', bess: '#009E73', freq: '#6A3D9A',
+  soc: '#009E73', grid: '#9ca3af'
 };
 
-function busy(btn, on=true){ if(!btn) return; btn.classList.toggle('is-busy',on); btn.disabled = on; }
-function toast(msg){ const t=document.getElementById('toast'); if(!t) return; t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1100); }
-
-// ------- chart helpers --------
-let powerChart, freqChart;
-function createCharts(){
-  const ctxP = document.getElementById('powerChart');
-  const ctxF = document.getElementById('freqChart');
-  const common = {responsive:true, animation:false, parsing:false, normalized:true, maintainAspectRatio:false};
-
-  powerChart = new Chart(ctxP, {
-    type:'line',
-    data:{
-      datasets:[
-        {label:'PV',   data:[], borderColor:colors.pv,   backgroundColor:colors.pv,   tension:.25, fill:false, pointRadius:0},
-        {label:'Wind', data:[], borderColor:colors.wind, backgroundColor:colors.wind, tension:.25, fill:false, pointRadius:0, borderDash:[6,4]},
-        {label:'Load', data:[], borderColor:colors.load, backgroundColor:colors.load, tension:.25, fill:false, pointRadius:0, borderWidth:1.5},
-        {label:'Diesel',data:[], borderColor:colors.diesel,backgroundColor:colors.diesel, tension:.25, fill:false, pointRadius:0},
-        {label:'BESS (+dis/-ch)', data:[], borderColor:colors.bess, backgroundColor:colors.bess, tension:.25, fill:false, pointRadius:0}
-      ]
-    },
-    options:{
-      ...common,
-      scales:{
-        x:{type:'linear', min:0, max:4, ticks:{callback:v=>v.toFixed(1)+'h'}},
-        y:{title:{display:true,text:'MW'}}
-      },
-      plugins:{legend:{position:'right'}}
-    }
-  });
-
-  freqChart = new Chart(ctxF,{
-    type:'line',
-    data:{
-      datasets:[
-        {label:'Freq', data:[], borderColor:colors.freq, backgroundColor:colors.freq, tension:.15, pointRadius:0},
-        {label:'SOC',  data:[], borderColor:colors.soc,  backgroundColor:colors.soc,  tension:.15, pointRadius:0, yAxisID:'y2'},
-        {label:'f₀=60 Hz baseline', data:[{x:0,y:60},{x:4,y:60}], borderColor:colors.dotted, borderDash:[4,4], pointRadius:0, fill:false}
-      ]
-    },
-    options:{
-      ...common,
-      scales:{
-        x:{type:'linear', min:0, max:4, ticks:{callback:v=>v.toFixed(1)+'h'}},
-        y:{title:{display:true,text:'Hz'}, min:55, max:65},
-        y2:{position:'right', title:{display:true,text:'SOC %'}, min:0,max:100, grid:{display:false}}
-      },
-      plugins:{legend:{position:'right'}}
-    }
-  });
+// ---------- engine adapter + shim ----------
+function detectEngine() {
+  // private bundle could attach global or export via module; keep robust
+  if (window.emsEngine?.createEngine) return window.emsEngine;
+  if (window.createEngine) return { createEngine: window.createEngine };
+  return null;
 }
 
-function updateWindow(xmin, xmax){
-  powerChart.options.scales.x.min = xmin;
-  powerChart.options.scales.x.max = xmax;
-  // baseline 线段也要跟着缩放
-  const base = freqChart.data.datasets[2];
-  base.data = [{x:xmin,y:60},{x:xmax,y:60}];
+function createShimEngine() {
+  let timer=null, cb=()=>{}, running=false;
+  // state
+  const S = { t:0, hz:60, soc:70, pv:0, wind:0, load:12, diesel:12, bess:0 };
 
-  freqChart.options.scales.x.min = xmin;
-  freqChart.options.scales.x.max = xmax;
+  // KPI accumulator
+  const K = { fuelUsedL:0, fuelBaselineL:0, fuelSavedL:0, renewableShare:0,
+              pvEnergyMWh:0, windEnergyMWh:0, curtailMWh:0, n1ok:true };
 
-  powerChart.update('none');
-  freqChart.update('none');
-}
+  function integrate(dt){
+    // energies in MWh (dt in seconds)
+    const ren = Math.max(0, S.pv + S.wind);
+    const curt = Math.max(0, ren - S.load);
+    K.curtailMWh   += curt * dt / 3600;
+    K.pvEnergyMWh  += Math.max(0,S.pv) * dt / 3600;
+    K.windEnergyMWh+= Math.max(0,S.wind)* dt / 3600;
 
-// ------- data buffer (24h) -------
-const buf = {
-  times:[], pv:[], wind:[], load:[], diesel:[], bess:[], hz:[], soc:[]
-};
-function pushPoint(t, s){
-  const cap = 24*60*6; // 24h, 每分钟 6 点（10s 分辨率）— 仅演示
-  function push(arr,v){ arr.push(v); if(arr.length>cap) arr.shift(); }
-  push(buf.times, t);
-  push(buf.pv, s.pv); push(buf.wind, s.wind); push(buf.load, s.load);
-  push(buf.diesel, s.diesel); push(buf.bess, s.bess);
-  push(buf.hz, s.hz); push(buf.soc, s.soc);
-}
+    // simple specific fuel rate (proxy)
+    // 0.22 L/kWh -> per MW * h -> L/h ; multiply dt(h)
+    K.fuelUsedL    += Math.max(0,S.diesel) * 220 * (dt/3600);
+    K.fuelBaselineL+= Math.max(0,S.load)   * 220 * (dt/3600);
+    K.fuelSavedL    = Math.max(0, K.fuelBaselineL - K.fuelUsedL);
 
-function redraw(xmin, xmax){
-  // 过滤窗口内的数据
-  const idx = buf.times.reduce((acc,tm,i)=>{ if(tm>=xmin && tm<=xmax) acc.push(i); return acc; },[]);
-  function pack(arr){ return idx.map(i=>({x:buf.times[i], y:arr[i]})); }
-
-  powerChart.data.datasets[0].data = pack(buf.pv);
-  powerChart.data.datasets[1].data = pack(buf.wind);
-  powerChart.data.datasets[2].data = pack(buf.load);
-  powerChart.data.datasets[3].data = pack(buf.diesel);
-  powerChart.data.datasets[4].data = pack(buf.bess);
-  powerChart.update('none');
-
-  freqChart.data.datasets[0].data = pack(buf.hz);
-  freqChart.data.datasets[1].data = pack(buf.soc);
-  // baseline 数据在 updateWindow() 已处理
-  freqChart.update('none');
-}
-
-// ------- KPI & status -------
-function setText(id, val){ const el=document.getElementById(id); if(el) el.textContent=val; }
-function updateKpisFromState(s){
-  // 这些 KPI 数值示例化；若你的引擎有成熟 KPI，请把这里改成调用 engine.getState() 里的字段
-  // 下面简单滚动累加（演示）
-  window.__E ||= {Epv:0,Ew:0,curt:0,fuel:0,base:0};
-  const E = window.__E;
-  E.Epv += Math.max(0, s.pv)/360;   // 粗略换算到 MWh（10s/3600h≈1/360）
-  E.Ew  += Math.max(0, s.wind)/360;
-  const ren = Math.max(0, s.pv + s.wind);
-  const curt = Math.max(0, ren - s.load); E.curt += curt/360;
-  // 粗略燃油（演示）：柴油 MW * 0.22 L/s（假设比油耗）*10s → L
-  E.fuel += Math.max(0,s.diesel) * 0.22 * 10;
-  // 基准（全柴）：负荷 * 同样系数
-  E.base += Math.max(0,s.load) * 0.22 * 10;
-
-  const share = (E.Epv+E.Ew) / Math.max(1e-6, (E.Epv+E.Ew) + (E.fuel/0.22/1000)); // 仅演示口径
-  setText('k_pvE',    `${E.Epv.toFixed(2)} MWh`);
-  setText('k_windE',  `${E.Ew.toFixed(2)} MWh`);
-  setText('k_curtail',`${E.curt.toFixed(2)} MWh`);
-  setText('k_fuelUsed', `${E.fuel.toFixed(0)} L`);
-  setText('k_fuelBase', `${E.base.toFixed(0)} L`);
-  setText('k_fuelSaved', `${Math.max(0,E.base-E.fuel).toFixed(0)} L`);
-  setText('k_renShare', `${(share*100).toFixed(1)} %`);
-}
-
-// ------- bootstrap -------
-(async function main(){
-  createCharts();
-
-  const btnStart = document.getElementById('btnStart');
-  const btnPause = document.getElementById('btnPause');
-  const btnReset = document.getElementById('btnReset');
-  const winLen = document.getElementById('winLen');
-  const winStart = document.getElementById('winStart');
-  const follow = document.getElementById('followLive');
-  const winText = document.getElementById('winText');
-  const statusEl = document.getElementById('status');
-
-  function refreshWindowLabel(){
-    const w = Number(winLen.value||4);
-    const s = Number(winStart.value||0);
-    winText.textContent = `[${s.toFixed(1)}, ${(s+w).toFixed(1)}] h`;
-    updateWindow(s, s+w);
-    redraw(s, s+w);
+    const totalMWh = (K.pvEnergyMWh + K.windEnergyMWh) + (K.fuelUsedL/220);
+    K.renewableShare = totalMWh>1e-6 ? (K.pvEnergyMWh+K.windEnergyMWh)/totalMWh : 0;
+    K.n1ok = true;
   }
 
-  // 引擎
-  const sim = await createAdapter({/* TODO: pass config from form */});
-  let tHour = 0;
+  return {
+    start(dt, f0) {
+      if (running) return;
+      running = true;
+      timer = setInterval(() => {
+        const h = S.t % 24;
+        const pvMax = +$('PpvMax').value || 30;
+        const pvShape = +$('pvShape').value || 1.5;
+        const cloud = +$('pvCloud').value || 0.35;
+        // simple day shape with cloud attenuation
+        const day = (h>6 && h<18) ? Math.sin(Math.PI*(h-6)/12)**pvShape : 0;
+        S.pv = pvMax * day * (1 - cloud*0.7);
 
-  sim.onTick((s)=>{
-    // 时间轴使用小时（演示：每秒≈0.083h，在 shim 里已做；真实引擎请按实际换算）
-    tHour = s.t ?? (tHour + 1/12);
-    pushPoint(tHour, s);
+        const wLim = +$('PwindMax').value || 6;
+        const wMean = +$('windMean').value || 8;
+        const wVar = +$('windVar').value || 0.4;
+        S.wind = clamp((wMean/3)+Math.sin(S.t*0.6)*wVar*2 + Math.cos(S.t*0.33)*wVar, 0, 1) * wLim;
 
+        const L0 = +$('Pload').value || 12;
+        const Lvar = +$('loadVar').value || 1.2;
+        S.load = L0 + Math.sin(S.t*2*Math.PI/4) * Lvar;
+
+        // dispatch: diesel + bess hold frequency
+        const ren = Math.max(0, S.pv+S.wind);
+        const net = S.load - ren;
+        // diesel as slower mover
+        const dgCap = (+$('dg33n').value||0)*3.3 + (+$('dg12n').value||0)*1.25;
+        const dgTarget = clamp(net, 0, Math.max(0,dgCap));
+        const rate = (+$('rampUp').value||0.2) * dt; // MW per sec * sec = MW
+        if (S.diesel < dgTarget) S.diesel = Math.min(dgTarget, S.diesel + rate);
+        else S.diesel = Math.max(dgTarget, S.diesel - rate*1.5);
+
+        const rest = net - S.diesel;    // leftover to BESS
+        S.bess = -rest;                 // 放电为正、充电为负（约定）
+        const Pb_max = +$('PbMax').value || 8;
+        S.bess = clamp(S.bess, -Pb_max, Pb_max);
+
+        // SOC integrate: sign opposite to power (充电增加SOC)
+        const Eb = +$('EbMax').value || 20; // MWh
+        const dSOC = (-S.bess) * dt / 3600 / Eb * 100;
+        S.soc = clamp(S.soc + dSOC, 10, 95);
+
+        // frequency proxy: droop on net power mismatch handled by BESS
+        const f0 = +$('f0').value || 60;
+        const D  = +$('Dsys').value || 2.2;
+        const alpha = (+$('alphaLoad').value||2.0)/100; // %/Hz -> pu/Hz
+        const imbalance = rest; // MW not covered by diesel -> BESS/residual
+        const df = (-imbalance) * 0.02 - (alpha*(S.hz - f0)); // simple closed-loop
+        S.hz = clamp(S.hz + df, f0-5, f0+5);
+
+        S.t += dt/3600; // hours
+        integrate(dt);
+        cb({ ...S });
+      }, Math.max(50, dt*1000));
+    },
+    pause(){ if (timer) clearInterval(timer); timer=null; running=false; },
+    reset(){
+      this.pause();
+      Object.assign(S,{ t:0, hz:60, soc:70, pv:0, wind:0, load:12, diesel:12, bess:0 });
+      Object.assign(K,{ fuelUsedL:0, fuelBaselineL:0, fuelSavedL:0, renewableShare:0,
+                        pvEnergyMWh:0, windEnergyMWh:0, curtailMWh:0, n1ok:true });
+    },
+    onTick(fn){ cb = fn; },
+    getState(){ return { ...S }; },
+    getKpis(){ return { ...K }; }
+  };
+}
+
+function getEngine() {
+  const ext = detectEngine();
+  if (ext) return ext.createEngine ? ext.createEngine() : createShimEngine();
+  return createShimEngine();
+}
+
+// ---------- buffer & canvas drawing ----------
+const buf = { t:[], pv:[], wind:[], load:[], diesel:[], bess:[], hz:[], soc:[] };
+function pushBuf(s, cap=24*60*6) {
+  const push = (k,v)=>{ buf[k].push(v); if (buf[k].length>cap) buf[k].shift(); };
+  push('t', s.t); push('pv', s.pv); push('wind', s.wind);
+  push('load', s.load); push('diesel', s.diesel); push('bess', s.bess);
+  push('hz', s.hz); push('soc', s.soc);
+}
+
+function line(ctx, xs, ys, color, dashed=false){
+  if(xs.length<2) return;
+  ctx.strokeStyle=color; ctx.lineWidth=1.6;
+  if(dashed) ctx.setLineDash([6,4]); else ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(xs[0], ys[0]);
+  for(let i=1;i<xs.length;i++) ctx.lineTo(xs[i], ys[i]);
+  ctx.stroke();
+}
+
+function drawAxes(ctx, w, h){
+  ctx.clearRect(0,0,w,h);
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,w,h);
+  // border
+  ctx.strokeStyle='#e5e7eb'; ctx.strokeRect(0,0,w,h);
+}
+
+function drawPowerWindow(canvas, x0, x1){
+  const ctx=canvas.getContext('2d'); const w=canvas.width, h=canvas.height;
+  drawAxes(ctx,w,h);
+  // y scale (auto from data in window)
+  const idx = buf.t.map((v,i)=> (v>=x0 && v<=x1) ? i : -1).filter(i=>i>=0);
+  const series = ['pv','wind','load','diesel','bess'];
+  const all = series.flatMap(k => idx.map(i=> buf[k][i]));
+  const minY = Math.min(0, ...all), maxY = Math.max(1, ...all);
+  const X = t => (t-x0)/(x1-x0) * (w-28) + 14;
+  const Y = v => h-14 - (v-minY)/(maxY-minY+1e-9) * (h-28);
+
+  // grid zero
+  ctx.strokeStyle='#e5e7eb'; ctx.setLineDash([4,4]);
+  const yz = Y(0); ctx.beginPath(); ctx.moveTo(0,yz); ctx.lineTo(w,yz); ctx.stroke();
+  ctx.setLineDash([]);
+
+  series.forEach(k=>{
+    const xs=[], ys=[];
+    idx.forEach(i=>{ xs.push(X(buf.t[i])); ys.push(Y(buf[k][i])); });
+    const col = ({pv:COL.pv, wind:COL.wind, load:COL.load, diesel:COL.diesel, bess:COL.bess})[k];
+    const dash = (k==='wind'||k==='bess');
+    line(ctx, xs, ys, col, dash);
+  });
+}
+
+function drawFreqWindow(canvas, x0, x1){
+  const ctx=canvas.getContext('2d'); const w=canvas.width, h=canvas.height;
+  drawAxes(ctx,w,h);
+  const idx = buf.t.map((v,i)=> (v>=x0 && v<=x1) ? i : -1).filter(i=>i>=0);
+
+  // y scales: freq and SOC (dual but drawn on same canvas)
+  const f0 = +$('f0').value || 60;
+  const ysF = idx.map(i=> buf.hz[i]);
+  const minF = Math.min(f0-5, ...ysF), maxF = Math.max(f0+5, ...ysF);
+  const ysS = idx.map(i=> buf.soc[i]);
+  const minS = 0, maxS = 100;
+
+  const X = t => (t-x0)/(x1-x0) * (w-28) + 14;
+  const Yf = v => h-14 - (v-minF)/(maxF-minF+1e-9) * (h-28);
+  const Ys = v => h-14 - (v-minS)/(maxS-minS) * (h-28);
+
+  // 60 Hz baseline
+  ctx.strokeStyle=COL.grid; ctx.setLineDash([4,4]);
+  ctx.beginPath(); ctx.moveTo(0, Yf(f0)); ctx.lineTo(w, Yf(f0)); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // freq
+  const xf=[], yf=[];
+  idx.forEach(i=>{ xf.push(X(buf.t[i])); yf.push(Yf(buf.hz[i])); });
+  line(ctx, xf, yf, COL.freq, false);
+
+  // SOC (dashed)
+  const xs=[], ys=[];
+  idx.forEach(i=>{ xs.push(X(buf.t[i])); ys.push(Ys(buf.soc[i])); });
+  line(ctx, xs, ys, COL.soc, true);
+}
+
+// ---------- KPIs & log ----------
+function setKpi(id, txt){ const el=$(id); if (el) el.textContent = txt; }
+function renderKpis(k){
+  setKpi('kpiFuel', `${kv(k.fuelUsedL,0)} L`);
+  setKpi('kpiFuelBase', `${kv(k.fuelBaselineL,0)} L`);
+  setKpi('kpiFuelSave', `${kv(k.fuelSavedL,0)} L`);
+  setKpi('kpiRE', `${kv((k.renewableShare||0)*100,1)}%`);
+  setKpi('kpiPVgen', `${kv(k.pvEnergyMWh,2)} MWh`);
+  setKpi('kpiWDgen', `${kv(k.windEnergyMWh,2)} MWh`);
+  setKpi('kpiCurt', `${kv(k.curtailMWh,2)} MWh`);
+  setKpi('kpiN1', k.n1ok===false ? 'Not Met' : 'OK');
+}
+
+function logLine(s){
+  const el = $('log');
+  const ts = new Date().toLocaleTimeString('en-CA',{hour12:false});
+  el.textContent = `[${ts}] ${s}\n` + el.textContent;
+}
+
+// ---------- main wiring ----------
+export function setupUI(){
+  // canvas dpi fix
+  const fixDPI = (c)=>{ const dpr=window.devicePixelRatio||1; c.width=c.clientWidth*dpr; c.height=c.clientHeight*dpr; const ctx=c.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); };
+  const pC = $('pPlot'), fC = $('fPlot'); fixDPI(pC); fixDPI(fC); new ResizeObserver(()=>{fixDPI(pC);fixDPI(fC);}).observe(pC.parentElement);
+
+  const eng = getEngine();
+
+  // window controls
+  const viewLen = $('viewHours'); const viewStart = $('viewStart'); const viewLabel = $('viewLabel'); const follow = $('followLive');
+  function refreshWindowLabel(){
+    const l = +viewLen.value || 4, s = +viewStart.value || 0;
+    viewLabel.textContent = `[${kv(s,1)}, ${kv(s+l,1)}] h`;
+    setKpi('kpiWin', viewLabel.textContent);
+    drawPowerWindow(pC, s, s+l);
+    drawFreqWindow(fC, s, s+l);
+  }
+  viewLen.addEventListener('change', refreshWindowLabel);
+  viewStart.addEventListener('input', ()=>{ follow.checked=false; refreshWindowLabel(); });
+
+  // buttons
+  $('startBtn').onclick = ()=>{
+    const dt = +$('dt').value || 0.5;
+    const f0 = +$('f0').value || 60;
+    eng.start(dt, f0);
+    logLine('启动仿真');
+  };
+  $('pauseBtn').onclick = ()=>{ eng.pause(); logLine('暂停'); };
+  $('resetBtn').onclick = ()=>{
+    eng.reset();
+    Object.keys(buf).forEach(k=>buf[k]=[]);
+    refreshWindowLabel();
+    logLine('重置');
+  };
+
+  // language button文字由 i18n 控制，这里只负责功能
+  $('langBtn').onclick = $('langBtn').onclick || (()=>{});
+
+  // engine tick
+  eng.onTick((s)=>{
+    pushBuf(s);
     if (follow.checked){
-      const w = Number(winLen.value||4);
-      const s0 = Math.max(0, tHour - w);
-      winStart.value = s0;
+      const l = +viewLen.value || 4;
+      viewStart.value = Math.max(0, s.t - l);
     }
     refreshWindowLabel();
+    $('live').textContent =
+      `t=${kv(s.t,2)} h | f=${kv(s.hz,3)} Hz | Δf=${kv(s.hz-(+$('f0').value||60),3)} Hz | `+
+      `PV=${kv(s.pv,2)} MW | Wind=${kv(s.wind,2)} MW | Diesel=${kv(s.diesel,2)} MW | `+
+      `BESS=${kv(s.bess,2)} MW | SOC=${kv(s.soc,1)} % | Load=${kv(s.load,2)} MW`;
 
-    statusEl.textContent =
-      `t=${tHour.toFixed(2)} h | f=${(s.hz??0).toFixed(3)} Hz | Δf=${((s.hz??0)-60).toFixed(3)} Hz | `+
-      `PV=${(s.pv??0).toFixed(2)} MW | Wind=${(s.wind??0).toFixed(2)} MW | Diesel=${(s.diesel??0).toFixed(2)} MW | `+
-      `BESS=${(s.bess??0).toFixed(2)} MW | SOC=${(s.soc??0).toFixed(1)} % | Load=${(s.load??0).toFixed(2)} MW`;
-
-    updateKpisFromState(s);
+    if (typeof eng.getKpis === 'function') renderKpis(eng.getKpis());
   });
 
-  // 交互
-  btnStart.addEventListener('click', async()=>{ busy(btnStart,true); try{ await sim.start(); toast('Started'); } finally{ busy(btnStart,false);} });
-  btnPause.addEventListener('click', async()=>{ busy(btnPause,true); try{ await sim.pause(); toast('Paused'); } finally{ busy(btnPause,false);} });
-  btnReset.addEventListener('click', async()=>{
-    busy(btnReset,true);
-    try{
-      await sim.reset();
-      // 清空 buffer
-      Object.keys(buf).forEach(k=>buf[k]=[]);
-      window.__E = {Epv:0,Ew:0,curt:0,fuel:0,base:0};
-      tHour = 0; refreshWindowLabel(); redraw(0, Number(winLen.value||4));
-      toast('Reset');
-    } finally { busy(btnReset,false); }
-  });
-
-  winLen.addEventListener('change', refreshWindowLabel);
-  winStart.addEventListener('input',()=>{ follow.checked=false; refreshWindowLabel(); });
-
-  // 初始刷新一次
+  // first render
   refreshWindowLabel();
-
-  // 若你希望自动开始，在下面解开注释
-  // sim.start();
-})();
+}
