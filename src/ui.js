@@ -55,6 +55,11 @@ function createShimEngine() {
   return {
     start(dt){
       if (running) return;
+      // dt 兜底：空/0/负/NaN -> 0.5s；最小 0.05s
+      let useDt = num('dt', 0.5);
+      if (!Number.isFinite(useDt) || useDt <= 0.0) useDt = 0.5;
+      useDt = Math.max(0.05, useDt);
+
       running = true;
       timer = setInterval(()=>{
         const h = S.t % 24;
@@ -79,7 +84,7 @@ function createShimEngine() {
 
         const dgCap = num('dg33n',0)*3.3 + num('dg12n',0)*1.25;
         const dgTarget = clamp(net, 0, Math.max(0,dgCap));
-        const rate = num('rampUp',0.2) * dt;
+        const rate = num('rampUp',0.2) * useDt;
         if (S.diesel < dgTarget) S.diesel = Math.min(dgTarget, S.diesel + rate);
         else S.diesel = Math.max(dgTarget, S.diesel - rate*1.5);
 
@@ -88,19 +93,21 @@ function createShimEngine() {
         S.bess = clamp(-rest, -PbMax, PbMax); // 放电正、充电负（UI 规范）
 
         const Eb= num('EbMax', 20);
-        S.soc = clamp(S.soc + (-S.bess)*dt/3600/Eb*100, 10, 95);
+        S.soc = clamp(S.soc + (-S.bess)*useDt/3600/Eb*100, 10, 95);
 
         const f0= num('f0', 60);
         const alpha = num('alphaLoad', 2)/100;
         const df = (-rest)*0.02 - (alpha*(S.hz - f0));
         S.hz = clamp(S.hz + df, f0-5, f0+5);
 
-        S.t += dt/3600;
-        integ(dt);
+        S.t += useDt/3600;
+        integ(useDt);
         cb({...S});
-      }, Math.max(50, dt*1000));
+      }, Math.max(50, useDt * 1000));
+
+      const follow = $('followLive'); if (follow) follow.checked = true;
     },
-    pause(){ running=false; if (timer) clearInterval(timer); timer=null; },
+    pause(){ if (timer) clearInterval(timer); timer=null; running=false; },
     reset(){ this.pause(); Object.assign(S,{ t:0, hz:60, soc:70, pv:0, wind:0, load:12, diesel:12, bess:0 });
              Object.assign(K,{ fuelUsedL:0, fuelBaselineL:0, fuelSavedL:0, renewableShare:0, pvEnergyMWh:0, windEnergyMWh:0, curtailMWh:0, n1ok:true }); },
     onTick(fn){ cb=fn; },
@@ -133,7 +140,7 @@ function readCfgFromUI(){
 
     // Diesel（单位修正 & 最小负荷）
     'dg.allowOff': boolFromStr('allowDieselOff', true),
-    'dg.Rdg': num('Rdg', 4)/100,          // % → pu（关键修复）
+    'dg.Rdg': num('Rdg', 4)/100,          // % → pu（关键）
     'dg.rampUp': num('rampUp', 0.2),
     'dg.rampDn': num('rampDn', 1.0),
     'dg.delay': num('dgDelay', 600),
@@ -197,7 +204,7 @@ function getEngine(){
       core.step(dt);
       const p = core.getLastPoint?.() || {};
 
-      // BESS：私库 Pb>0 往往表示“充电”，UI 需要“+放电/−充电”
+      // BESS：私库 Pb>0 可能表示“充电”，UI 需要“+放电/−充电”
       const bessUI = -(+p.Pb || 0);
 
       // SOC：若引擎返回 0–1，则转为 0–100%
@@ -220,9 +227,15 @@ function getEngine(){
     return {
       start(dt){
         if (running) return;
-        const useDt = +(num('dt', dt || 0.5));
+        // dt 兜底：空/0/负/NaN -> 0.5s；最小 0.05s
+        let useDt = num('dt', 0.5);
+        if (!Number.isFinite(useDt) || useDt <= 0.0) useDt = 0.5;
+        useDt = Math.max(0.05, useDt);
+
         running = true;
         timer = setInterval(()=>tick(useDt), Math.max(50, useDt * 1000));
+
+        const follow = $('followLive'); if (follow) follow.checked = true;
       },
       pause(){
         running = false;
@@ -263,14 +276,15 @@ function line(ctx,xs,ys,color,dash=false){
   ctx.strokeStyle=color; ctx.lineWidth=1.6;
   ctx.setLineDash(dash?[6,4]:[]);
   ctx.beginPath(); ctx.moveTo(xs[0],ys[0]);
-  for(let i=1;i<xs.length;i++) ctx.lineTo(xs[i]);
+  for(let i=1;i<xs.length;i++) ctx.lineTo(xs[i],ys[i]);
   ctx.stroke(); ctx.setLineDash([]);
 }
 function drawFrame(ctx,w,h){ ctx.clearRect(0,0,w,h); ctx.fillStyle='#fff'; ctx.fillRect(0,0,w,h); ctx.strokeStyle='#e5e7eb'; ctx.strokeRect(0,0,w,h); }
 
 function drawPower(c,x0,x1){
   const ctx=c.getContext('2d'); const w=c.width, h=c.height; drawFrame(ctx,w,h);
-  const idx=buf.t.map((v,i)=>(v>=x0&&v<=x1)?i:-1).filter(i=>i>=0);
+  const eps=1e-6;
+  const idx=buf.t.map((v,i)=>(v>=x0-eps&&v<=x1+eps)?i:-1).filter(i=>i>=0);
   const series=['pv','wind','load','diesel','bess'];
   const all=series.flatMap(k=>idx.map(i=>buf[k][i]));
   const minY=Math.min(0,...all), maxY=Math.max(1,...all);
@@ -288,7 +302,8 @@ function drawPower(c,x0,x1){
 }
 function drawFreq(c,x0,x1){
   const ctx=c.getContext('2d'); const w=c.width,h=c.height; drawFrame(ctx,w,h);
-  const idx=buf.t.map((v,i)=>(v>=x0&&v<=x1)?i:-1).filter(i=>i>=0);
+  const eps=1e-6;
+  const idx=buf.t.map((v,i)=>(v>=x0-eps&&v<=x1+eps)?i:-1).filter(i=>i>=0);
   const f0= num('f0', 60);
   const ysF=idx.map(i=>buf.hz[i]); const minF=Math.min(f0-5,...ysF), maxF=Math.max(f0+5,...ysF);
   const X=t=>(t-x0)/(x1-x0)*(w-28)+14;
@@ -305,7 +320,7 @@ function drawFreq(c,x0,x1){
   line(ctx,xs,ys,COL.soc,true);
 }
 
-// ==== KPI & 日志（保留） ====
+// ==== KPI & 日志 ====
 function setK(id,txt){ const el=$(id); if(el) el.textContent=txt; }
 function renderK(k){
   setK('kpiFuel', `${kv(k.fuelUsedL,0)} L`);
@@ -341,7 +356,7 @@ export function setupUI(){
   viewLen?.addEventListener('change', refreshWin);
   viewStart?.addEventListener('input', ()=>{ if(follow) follow.checked=false; refreshWin(); });
 
-  $('startBtn').onclick=()=>{ const dt= num('dt',0.5); eng.start(dt); logLine('启动仿真'); };
+  $('startBtn').onclick=()=>{ eng.start(num('dt',0.5)); logLine('启动仿真'); };
   $('pauseBtn').onclick=()=>{ eng.pause(); logLine('暂停'); };
   $('resetBtn').onclick=()=>{ eng.reset(); Object.keys(buf).forEach(k=>buf[k]=[]); refreshWin(); logLine('重置'); };
 
