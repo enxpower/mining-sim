@@ -227,3 +227,24 @@
 <script type="module" src="./vendor/ems-engine.min.js"></script>
 </body>
 </html>
+<!-- 放在 index.html 的尾部，保持其它内容不变 -->
+<script type="module">
+  import { i18n, setLang, applyText } from "./src/i18n.js";
+  import { setupUI } from "./src/ui.js";
+
+  document.getElementById("copyYear").textContent = `© ${new Date().getFullYear()}`;
+
+  const langBtn = document.getElementById("langBtn");
+  let current = "en";
+  applyText(current);
+  langBtn.onclick = () => {
+    current = (current === "en" ? "zh" : "en");
+    setLang(current);
+    applyText(current);
+  };
+
+  setupUI(); // 绑定事件并启动绘图
+</script>
+
+<!-- 私库引擎（可选）；同样改成相对路径 -->
+<script type="module" src="./vendor/ems-engine.min.js"></script>
