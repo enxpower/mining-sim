@@ -1,4 +1,4 @@
-name: Build & Deploy Pages
+name: Build & Deploy Pages (private engine required)
 
 on:
   push:
@@ -14,6 +14,13 @@ concurrency:
   group: "pages"
   cancel-in-progress: true
 
+# 根据你的实际情况改动这四个值（若组织/仓库名不同）
+env:
+  ENGINE_OWNER: enxpower            # ← 你的组织/账号
+  ENGINE_REPO: ems-engine           # ← 私库名
+  ENGINE_TAG:  latest               # ← 私库 release 的 tag（建议 latest 或 vX.Y.Z）
+  ENGINE_ASSET: ems-engine.min.js   # ← release 里的构建产物文件名（必须匹配）
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,35 +28,44 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1) 复制源代码到 public/src（生产环境用相对 ./src/ 路径）
+      # 将 src/ 复制到 public/src/（页面中用 ./src/*.js）
       - name: Bundle src into public/src
         run: |
           mkdir -p public/src
           rsync -a --delete src/ public/src/ || true
 
-      # 2) 准备 vendor 目录（放 ems-engine.min.js）
       - name: Ensure vendor dir
         run: mkdir -p public/vendor
 
-      # 3) （可选）下载私库引擎产物；若没有 SECRET 或下载失败，跳过不报错
-      - name: Try download private engine (optional)
-        if: ${{ secrets.ENGINE_PAT != '' }}
-        env:
-          GH_TOKEN: ${{ secrets.ENGINE_PAT }}   # PAT: 需要对私库有 read:packages / read:repo 或至少 read releases
-          ENGINE_OWNER: enxpower               # ← 如有不同，请改成你的组织/账号
-          ENGINE_REPO: ems-engine              # ← 私库名
-          ENGINE_TAG: latest                   # ← 取 latest release
+      # 🔐 校验 Token 存在（必须有 ENGINE_READ_TOKEN，否则直接失败）
+      - name: Verify secret is present
         run: |
-          set -e
-          echo "Attempting to fetch ${ENGINE_OWNER}/${ENGINE_REPO}@${ENGINE_TAG}"
-          # 下载失败不会阻断流程（例如 release 不存在 / 权限不足）
+          if [ -z "${{ secrets.ENGINE_READ_TOKEN }}" ]; then
+            echo "❌ Missing repository secret ENGINE_READ_TOKEN"
+            exit 2
+          fi
+          echo "✅ ENGINE_READ_TOKEN is present (value hidden)"
+
+      # ⬇️ 强制下载私库引擎；失败即 fail，确保线上一定使用理论引擎
+      - name: Download private engine (MUST SUCCEED)
+        env:
+          GH_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "==> Fetching ${ENGINE_OWNER}/${ENGINE_REPO} release: ${ENGINE_TAG}"
+          gh release view "${ENGINE_TAG}" --repo "${ENGINE_OWNER}/${ENGINE_REPO}"
+
+          echo "==> Downloading asset: ${ENGINE_ASSET}"
           gh release download "${ENGINE_TAG}" \
             --repo "${ENGINE_OWNER}/${ENGINE_REPO}" \
-            --pattern "ems-engine.min.js" \
-            --dir "public/vendor" || echo "⚠️ Engine asset not found or no permission. Continuing without it."
-          ls -l public/vendor || true
+            --pattern "${ENGINE_ASSET}" \
+            --dir "public/vendor"
 
-      # 4) 配置 Pages，并上传静态站点工件（public）
+          echo "==> Verifying asset exists"
+          test -s "public/vendor/${ENGINE_ASSET}" || (echo "❌ ${ENGINE_ASSET} not found or empty"; exit 66)
+          ls -lh public/vendor
+
+      # 配置 & 上传静态站点（public 目录）
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
