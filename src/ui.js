@@ -9,29 +9,24 @@ const COL = {
   soc:'#009E73', grid:'#9ca3af'
 };
 
-// ===== 小工具：安全读取控件值（不存在则给默认） =====
+// ===== 小工具：安全读取控件值 =====
 const num = (id, def = 0) => {
   const v = $(id)?.value;
   const n = +v;
   return Number.isFinite(n) ? n : def;
 };
-const str = (id, def = '') => {
-  const v = $(id)?.value;
-  return (v ?? def);
-};
 const boolFromStr = (id, def = false) => {
-  const v = $(id)?.value;
-  if (v == null) return def;
+  const el = $(id);
+  if (!el) return def;
+  const v = el.value ?? '';
   const s = String(v).toLowerCase();
   if (s === 'true') return true;
   if (s === 'false') return false;
-  // 兜底：checkbox 也能识别
-  const el = $(id);
-  if (el && 'checked' in el) return !!el.checked;
+  if ('checked' in el) return !!el.checked;
   return def;
 };
 
-// ==== 引擎适配 + shim（缺私库也能跑） ====
+// ==== 引擎探测 + shim（缺私库也能跑） ====
 function detectEngine() {
   if (window.emsEngine?.createEngine) return window.emsEngine;
   if (window.createEngine) return { createEngine: window.createEngine };
@@ -90,7 +85,7 @@ function createShimEngine() {
 
         const rest = net - S.diesel;
         const PbMax = num('PbMax', 8);
-        S.bess = clamp(-rest, -PbMax, PbMax); // 放电正、充电负
+        S.bess = clamp(-rest, -PbMax, PbMax); // 放电正、充电负（UI 规范）
 
         const Eb= num('EbMax', 20);
         S.soc = clamp(S.soc + (-S.bess)*dt/3600/Eb*100, 10, 95);
@@ -105,7 +100,7 @@ function createShimEngine() {
         cb({...S});
       }, Math.max(50, dt*1000));
     },
-    pause(){ if (timer) clearInterval(timer); timer=null; running=false; },
+    pause(){ running=false; if (timer) clearInterval(timer); timer=null; },
     reset(){ this.pause(); Object.assign(S,{ t:0, hz:60, soc:70, pv:0, wind:0, load:12, diesel:12, bess:0 });
              Object.assign(K,{ fuelUsedL:0, fuelBaselineL:0, fuelSavedL:0, renewableShare:0, pvEnergyMWh:0, windEnergyMWh:0, curtailMWh:0, n1ok:true }); },
     onTick(fn){ cb=fn; },
@@ -113,7 +108,7 @@ function createShimEngine() {
   };
 }
 
-// ======== 将 UI 控件读作引擎配置（供私库引擎使用） ========
+// ======== 从 UI 读配置（供私库引擎使用） ========
 function readCfgFromUI(){
   return {
     // System & load
@@ -129,7 +124,7 @@ function readCfgFromUI(){
     pvCloud: num('pvCloud', 0.35),
     latDeg: num('lat', 25),
     dayOfYear: num('doy', 172),
-    pvSoiling: num('pvSoil', 0.9),        // ← 新增：与页面一致
+    pvSoiling: num('pvSoil', 0.9),
 
     // Wind
     'wind.Pmax': num('PwindMax', 6),
@@ -138,14 +133,14 @@ function readCfgFromUI(){
 
     // Diesel（单位修正 & 最小负荷）
     'dg.allowOff': boolFromStr('allowDieselOff', true),
-    'dg.Rdg': num('Rdg', 4)/100,          // ← 关键修复：% → pu
+    'dg.Rdg': num('Rdg', 4)/100,          // % → pu（关键修复）
     'dg.rampUp': num('rampUp', 0.2),
     'dg.rampDn': num('rampDn', 1.0),
     'dg.delay': num('dgDelay', 600),
     'dg.hyst': num('dgHyst', 1.5),
     'dg.n33': num('dg33n', 4),
     'dg.n12': num('dg12n', 1),
-    'dg.minPu': num('dgMinPu', 0.35),     // ← 新增：页面有该字段
+    'dg.minPu': num('dgMinPu', 0.35),
 
     // BESS
     'bess.Pmax': num('PbMax', 8),
@@ -171,7 +166,6 @@ function readCfgFromUI(){
   };
 }
 
-
 // 将 'a.b' 形式的键嵌套到对象里
 function mergeDotPaths(flat){
   const out = {};
@@ -186,12 +180,10 @@ function mergeDotPaths(flat){
 
 /**
  * 私库引擎薄包装器：
- * - 如果 window.emsEngine.createEngine 存在：创建 core，引入 setInterval 调用 core.step(dt)
- * - 将 core.getLastPoint() 的字段映射到 UI 期望的结构
- * - 暴露 start/pause/reset/onTick，与现有 UI 兼容
+ * - 若 window.emsEngine.createEngine 存在：创建 core，setInterval 调用 core.step(dt)
+ * - 将 core.getLastPoint() 的字段映射到 UI 结构（秒→小时、BESS 符号修正、SOC 兜底）
  */
 function getEngine(){
-  // 优先使用 emsEngine（或 window.createEngine）——它们都返回 { step(dt), getLastPoint() }
   const createFn =
     (window.emsEngine?.createEngine)
       ? window.emsEngine.createEngine
@@ -204,16 +196,23 @@ function getEngine(){
     function tick(dt){
       core.step(dt);
       const p = core.getLastPoint?.() || {};
+
+      // BESS：私库 Pb>0 往往表示“充电”，UI 需要“+放电/−充电”
+      const bessUI = -(+p.Pb || 0);
+
+      // SOC：若引擎返回 0–1，则转为 0–100%
+      let socVal = +p.soc;
+      if (Number.isFinite(socVal) && socVal <= 1.0001) socVal *= 100;
+
       const s = {
-        // 引擎内部 t 单位=秒，这里转小时以匹配 UI 缓冲和视窗
-        t: (p.t ?? 0) / 3600,
+        t: (p.t ?? 0) / 3600,           // 秒 → 小时（绘图窗口按小时）
         pv: +p.Ppv || 0,
         wind: +p.Pwind || 0,
         load: +p.Pload || 0,
         diesel: +p.Pdg || 0,
-        bess: +p.Pb || 0,
+        bess: bessUI,
         hz: +p.f || num('f0', 60),
-        soc: +p.soc || 60
+        soc: Number.isFinite(socVal) ? socVal : 60
       };
       cb(s);
     }
@@ -235,8 +234,7 @@ function getEngine(){
         core = createFn(mergeDotPaths(readCfgFromUI())); // 直接重建状态
       },
       onTick(fn){ cb = fn; }
-      // 注：私库暂未提供 KPI；UI 已做 typeof 检查，无此函数不会渲染 KPI
-      // getKpis(){ ... }
+      // 注：如需 KPI，可在此聚合或由引擎暴露 getKpis()
     };
   }
 
@@ -265,7 +263,7 @@ function line(ctx,xs,ys,color,dash=false){
   ctx.strokeStyle=color; ctx.lineWidth=1.6;
   ctx.setLineDash(dash?[6,4]:[]);
   ctx.beginPath(); ctx.moveTo(xs[0],ys[0]);
-  for(let i=1;i<xs.length;i++) ctx.lineTo(xs[i],ys[i]);
+  for(let i=1;i<xs.length;i++) ctx.lineTo(xs[i]);
   ctx.stroke(); ctx.setLineDash([]);
 }
 function drawFrame(ctx,w,h){ ctx.clearRect(0,0,w,h); ctx.fillStyle='#fff'; ctx.fillRect(0,0,w,h); ctx.strokeStyle='#e5e7eb'; ctx.strokeRect(0,0,w,h); }
@@ -307,7 +305,7 @@ function drawFreq(c,x0,x1){
   line(ctx,xs,ys,COL.soc,true);
 }
 
-// ==== KPI & 日志 ====
+// ==== KPI & 日志（保留） ====
 function setK(id,txt){ const el=$(id); if(el) el.textContent=txt; }
 function renderK(k){
   setK('kpiFuel', `${kv(k.fuelUsedL,0)} L`);
@@ -329,15 +327,15 @@ function logLine(s){
 export function setupUI(){
   const pC=$('pPlot'), fC=$('fPlot');
   const fix=()=>{ dpiCanvas(pC); dpiCanvas(fC); };
-  fix(); new ResizeObserver(fix).observe(pC.parentElement);
+  fix(); new ResizeObserver(fix).observe(pC?.parentElement ?? document.body);
 
   const eng=getEngine();
 
   const viewLen=$('viewHours'), viewStart=$('viewStart'), viewLabel=$('viewLabel'), follow=$('followLive');
   function refreshWin(){
     const L=num('viewHours',4), S=num('viewStart',0);
-    viewLabel.textContent=`[${kv(S,1)}, ${kv(S+L,1)}] h`;
-    document.getElementById('kpiWin').textContent=viewLabel.textContent;
+    if (viewLabel) viewLabel.textContent=`[${kv(S,1)}, ${kv(S+L,1)}] h`;
+    const kw=$('kpiWin'); if (kw) kw.textContent=viewLabel?.textContent ?? '';
     drawPower(pC,S,S+L); drawFreq(fC,S,S+L);
   }
   viewLen?.addEventListener('change', refreshWin);
