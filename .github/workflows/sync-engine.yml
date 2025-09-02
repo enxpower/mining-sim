@@ -1,0 +1,31 @@
+name: Sync private engine to public vendor
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths: [ ".github/workflows/sync-engine.yml" ]
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download engine file from private repo
+        env:
+          GH_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}   # ← 就用这个名字
+          OWNER: your-org-or-user                      # TODO: 改成你的
+          PRIVATE_REPO: ems-engine                     # TODO: 改成你的私库名
+          ENGINE_PATH: dist/ems-engine.esm.js          # TODO: 私库里实际文件路径
+        run: |
+          mkdir -p vendor
+          curl -H "Authorization: token ${GH_TOKEN}" \
+               -H "Accept: application/vnd.github.v3.raw" \
+               -o vendor/ems-engine.esm.js \
+               https://api.github.com/repos/${OWNER}/${PRIVATE_REPO}/contents/${ENGINE_PATH}
+      - name: Commit vendor file
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add vendor/ems-engine.esm.js
+          git commit -m "chore: sync engine to vendor" || echo "no changes"
+          git push
