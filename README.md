@@ -32,3 +32,13 @@ It is 100% static and GitHub Pages friendly.
 │ ├─ plot.js # tiny canvas line plotter (no deps)
 │ └─ export.js # CSV / PNG export helpers
 └─ README.md
+```
+
+
+## Quick start
+- Put this folder in your public repo.
+- Ensure your private engine builds to `../ems-engine/dist/ems-engine.min.js` (or edit path in `engine-adapter.js`).
+- Open `index.html` locally or via GitHub Pages.
+
+
+---
