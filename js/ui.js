@@ -22,27 +22,24 @@ let lastPointCount = 0, lastT = 0;
 init().catch(err => showError(err.message || String(err)));
 
 async function init(){
-  await createOrResetEngine(true); // init + warmup
+  await createOrResetEngine(true); // warmup
   wireEvents();
   render(true);
 }
 
 async function createOrResetEngine(warmup = false){
-  try {
+  try{
     toggleBusy(true);
     const seed = toInt(els.seed.value, 20250902);
     const overrides = getOverridesFromUI();
     const pair = await getEngine(seed, overrides);
     engine = pair.engine; ns = pair.ns;
-
-    // Warm up 10min to guarantee non-empty series
-    if (warmup) engine.run(600);
-
-    statusOK(`Engine ready. Points=${engine.getState().series.length}`);
-  } catch (e) {
-    showError("Failed to load engine: " + (e.message || e));
+    if (warmup) engine.run(600); // 10 min to ensure non-empty series
+    statusOK(`Engine ready · points=${engine.getState().series.length}`);
+  }catch(e){
+    showError('Failed to load engine: ' + (e.message || e));
     throw e;
-  } finally {
+  }finally{
     toggleBusy(false);
   }
 }
@@ -69,46 +66,30 @@ function getOverridesFromUI(){
 function wireEvents(){
   els.start.addEventListener('click', ()=>{
     if (!engine) return;
-    running = true;
-    els.start.disabled = true;
-    els.pause.disabled = false;
+    running = true; els.start.disabled = true; els.pause.disabled = false;
     tick();
   });
-
   els.pause.addEventListener('click', ()=>{
-    running = false;
-    els.start.disabled = false;
-    els.pause.disabled = true;
+    running = false; els.start.disabled = false; els.pause.disabled = true;
     if (raf) cancelAnimationFrame(raf);
   });
-
   els.step.addEventListener('click', ()=>{
     if (!engine) return;
-    engine.run(60);
-    render(true);
+    engine.run(60); render(true);
   });
-
   els.reset.addEventListener('click', async ()=>{
-    running = false; if (raf) cancelAnimationFrame(raf);
-    await createOrResetEngine(true);
-    render(true);
+    running=false; if (raf) cancelAnimationFrame(raf);
+    await createOrResetEngine(true); render(true);
   });
-
   els.apply.addEventListener('click', async ()=>{
-    running = false; if (raf) cancelAnimationFrame(raf);
-    await createOrResetEngine(true);
-    render(true);
+    running=false; if (raf) cancelAnimationFrame(raf);
+    await createOrResetEngine(true); render(true);
   });
-
   els.exportCSV.addEventListener('click', ()=>{
-    const st = engine?.getState();
-    if (!st?.series?.length) return showError('No data to export.');
+    const st = engine?.getState(); if (!st?.series?.length) return showError('No data to export.');
     exportCSV(st.series);
   });
-
-  els.exportPNG.addEventListener('click', ()=>{
-    exportPNG([cPower, cOther]);
-  });
+  els.exportPNG.addEventListener('click', ()=> exportPNG([cPower, cOther]));
 }
 
 function tick(){
@@ -119,26 +100,23 @@ function tick(){
   raf = requestAnimationFrame(tick);
 }
 
-function render(force = false){
+function render(force=false){
   const st = engine.getState();
   const series = st.series || [];
-  if (!series.length) { showError('Series empty. Try Start/Step or Apply Params.'); return; }
-
+  if (!series.length){ showError('Series empty. Click Start or Step.'); return; }
   if (!force && lastPointCount === series.length && lastT === st.t) return;
   lastPointCount = series.length; lastT = st.t;
 
-  // KPIs
-  const last = series[series.length - 1];
+  const last = series[series.length-1];
   els.kpiF.textContent = `${last.f.toFixed(3)} Hz`;
   els.kpiSOC.textContent = `${last.soc.toFixed(1)} %`;
   els.kpiFuel.textContent = `${(last.fuelLh ?? 0).toFixed(1)}`;
   els.kpiPVCurt.textContent = `${Math.max(0, Math.round((last.pvCurtMW ?? 0) * 1000))}`;
   els.kpiWindCurt.textContent = `${Math.max(0, Math.round((last.windCurtMW ?? 0) * 1000))}`;
-  const online = st.dg?.units?.filter(x => x.online).length ?? 0;
+  const online = st.dg?.units?.filter(x=>x.online).length ?? 0;
   els.kpiDG.textContent = String(online);
 
-  // Curves
-  const xs = series.map(p => p.t);
+  const xs = series.map(p=>p.t);
   plotP.setData(xs, [
     { name:'PV',     color:'#f59e0b', values: series.map(p=>p.Ppv) },
     { name:'Wind',   color:'#60a5fa', values: series.map(p=>p.Pwind) },
@@ -146,32 +124,17 @@ function render(force = false){
     { name:'Diesel', color:'#ef4444', values: series.map(p=>p.Pdg) },
     { name:'BESS',   color:'#10b981', values: series.map(p=>p.Pb) },
   ]);
-
   plotO.setData(xs, [
     { name:'Freq',  color:'#0ea5e9', values: series.map(p=>p.f) },
     { name:'SOC',   color:'#16a34a', values: series.map(p=>p.soc) },
     { name:'Fuel',  color:'#7c3aed', values: series.map(p=>p.fuelLh) },
   ]);
-
   statusOK(`t=${st.t.toFixed(1)}s · points=${series.length}`);
 }
 
-function toggleBusy(b){
-  document.body.style.cursor = b ? 'progress' : 'default';
-}
-
-function showError(msg){
-  els.status.textContent = msg;
-  els.status.hidden = false;
-  els.status.style.color = '#b91c1c';
-}
-
-function statusOK(msg){
-  els.status.textContent = msg;
-  els.status.hidden = false;
-  els.status.style.color = '#0f766e';
-}
-
+function toggleBusy(b){ document.body.style.cursor = b ? 'progress' : 'default'; }
+function showError(msg){ els.status.textContent = msg; els.status.hidden = false; els.status.style.color = '#b91c1c'; }
+function statusOK(msg){ els.status.textContent = msg; els.status.hidden = false; els.status.style.color = '#0f766e'; }
 function sel(map){ const out={}; for (const k in map) out[k]=document.querySelector(map[k]); return out; }
 const toNum=(v,def)=>{ const x=Number(v); return Number.isFinite(x)?x:def; };
 const toInt=(v,def)=>{ const x=parseInt(v,10); return Number.isFinite(x)?x:def; };
