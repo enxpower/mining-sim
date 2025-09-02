@@ -1,62 +1,85 @@
 <!DOCTYPE html>
-<div class="row">
-<button id="btnStart" class="btn primary">Start</button>
-<button id="btnPause" class="btn">Pause</button>
-<button id="btnStep" class="btn">+60s</button>
-<button id="btnReset" class="btn danger">Reset</button>
-</div>
-</section>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Off-Grid Mining Microgrid Simulator</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Off-Grid Mining Microgrid Simulator</h1>
+    <div class="cta">
+      <button id="btnExportCSV" class="btn">Export CSV</button>
+      <button id="btnExportPNG" class="btn">Export PNG</button>
+    </div>
+  </header>
 
+  <main class="grid">
+    <section class="card controls">
+      <h2>Controls</h2>
+      <div class="row">
+        <label>Seed <input id="inpSeed" type="number" step="1" value="20250902" /></label>
+        <label>Horizon (h) <input id="inpHorizon" type="number" step="1" min="1" max="72" value="24" /></label>
+        <label>dt (s) <input id="inpDt" type="number" step="0.1" min="0.1" value="0.5" /></label>
+        <label>Sample every <input id="inpSampleEvery" type="number" step="1" min="1" value="2" /></label>
+        <label>Speed (sim s / frame) <input id="inpSpeed" type="number" step="1" min="1" value="60" /></label>
+      </div>
+      <div class="row">
+        <button id="btnStart" class="btn primary">Start</button>
+        <button id="btnPause" class="btn" disabled>Pause</button>
+        <button id="btnStep" class="btn">+60s</button>
+        <button id="btnReset" class="btn danger">Reset</button>
+      </div>
+      <div id="status" class="status" hidden></div>
+    </section>
 
-<section class="card params">
-<h2>Scenario</h2>
-<div class="row">
-<label>Load base (MW) <input id="pLoadBase" type="number" step="0.1" value="12" /></label>
-<label>Load var (MW) <input id="pLoadVar" type="number" step="0.1" value="2.5" /></label>
-<label>PV max (MW) <input id="pPvMax" type="number" step="0.1" value="6" /></label>
-<label>PV shape <input id="pPvShape" type="number" step="0.1" value="1.3" /></label>
-<label>PV cloud (0..1) <input id="pPvCloud" type="number" step="0.05" min="0" max="1" value="0.5" /></label>
-<label>Wind max (MW) <input id="pWindMax" type="number" step="0.1" value="6" /></label>
-<label>Wind mean (m/s) <input id="pWindMean" type="number" step="0.1" value="9" /></label>
-<label>Wind var (0..1) <input id="pWindVar" type="number" step="0.05" min="0" max="1" value="0.25" /></label>
-<label>BESS Pmax (MW) <input id="pPbMax" type="number" step="0.1" value="8" /></label>
-<label>BESS E (MWh) <input id="pEbMax" type="number" step="0.1" value="24" /></label>
-<label>Initial SOC (%) <input id="pSoc0" type="number" step="1" min="0" max="100" value="60" /></label>
-</div>
-<div class="row">
-<button id="btnApply" class="btn">Apply Params</button>
-</div>
-</section>
+    <section class="card params">
+      <h2>Scenario</h2>
+      <div class="row">
+        <label>Load base (MW) <input id="pLoadBase" type="number" step="0.1" value="12" /></label>
+        <label>Load var (MW) <input id="pLoadVar" type="number" step="0.1" value="2.5" /></label>
+        <label>PV max (MW) <input id="pPvMax" type="number" step="0.1" value="6" /></label>
+        <label>PV shape <input id="pPvShape" type="number" step="0.1" value="1.3" /></label>
+        <label>PV cloud (0..1) <input id="pPvCloud" type="number" step="0.05" min="0" max="1" value="0.5" /></label>
+        <label>Wind max (MW) <input id="pWindMax" type="number" step="0.1" value="6" /></label>
+        <label>Wind mean (m/s) <input id="pWindMean" type="number" step="0.1" value="9" /></label>
+        <label>Wind var (0..1) <input id="pWindVar" type="number" step="0.05" min="0" max="1" value="0.25" /></label>
+        <label>BESS Pmax (MW) <input id="pPbMax" type="number" step="0.1" value="8" /></label>
+        <label>BESS E (MWh) <input id="pEbMax" type="number" step="0.1" value="24" /></label>
+        <label>Initial SOC (%) <input id="pSoc0" type="number" step="1" min="0" max="100" value="60" /></label>
+      </div>
+      <div class="row">
+        <button id="btnApply" class="btn">Apply Params</button>
+      </div>
+    </section>
 
+    <section class="card kpis">
+      <h2>KPIs</h2>
+      <div class="kpi-grid">
+        <div class="kpi"><div class="label">Frequency</div><div class="value" id="kpiF">—</div></div>
+        <div class="kpi"><div class="label">SOC</div><div class="value" id="kpiSOC">—</div></div>
+        <div class="kpi"><div class="label">Fuel (L/h)</div><div class="value" id="kpiFuel">—</div></div>
+        <div class="kpi"><div class="label">Diesel Online</div><div class="value" id="kpiDG">—</div></div>
+        <div class="kpi"><div class="label">PV Curtail (kW)</div><div class="value" id="kpiPVCurt">—</div></div>
+        <div class="kpi"><div class="label">Wind Curtail (kW)</div><div class="value" id="kpiWindCurt">—</div></div>
+      </div>
+    </section>
 
-<section class="card kpis">
-<h2>KPIs</h2>
-<div class="kpi-grid">
-<div class="kpi"><div class="label">Frequency</div><div class="value" id="kpiF">—</div></div>
-<div class="kpi"><div class="label">SOC</div><div class="value" id="kpiSOC">—</div></div>
-<div class="kpi"><div class="label">Fuel (L/h)</div><div class="value" id="kpiFuel">—</div></div>
-<div class="kpi"><div class="label">Diesel Online</div><div class="value" id="kpiDG">—</div></div>
-<div class="kpi"><div class="label">PV Curtail (kW)</div><div class="value" id="kpiPVCurt">—</div></div>
-<div class="kpi"><div class="label">Wind Curtail (kW)</div><div class="value" id="kpiWindCurt">—</div></div>
-</div>
-</section>
+    <section class="card charts">
+      <h2>Power (MW) · Window</h2>
+      <canvas id="chartPower" class="chart"></canvas>
+      <h2 class="mt">Frequency (Hz) / SOC (%) · Window</h2>
+      <canvas id="chartOther" class="chart"></canvas>
+    </section>
+  </main>
 
+  <footer class="footer">© EnergizeOS™ • Public UI for demo only</footer>
 
-<section class="card charts">
-<h2>Power Balance</h2>
-<canvas id="chartPower" class="chart"></canvas>
-<h2 class="mt">Frequency & SOC & Fuel</h2>
-<canvas id="chartOther" class="chart"></canvas>
-</section>
-</main>
-
-
-<footer class="footer">© EnergizeOS™ • Public UI for demo only</footer>
-
-
-<script src="js/engine-adapter.js" type="module"></script>
-<script src="js/plot.js" type="module"></script>
-<script src="js/export.js" type="module"></script>
-<script src="js/ui.js" type="module"></script>
+  <script type="module" src="js/engine-adapter.js"></script>
+  <script type="module" src="js/plot.js"></script>
+  <script type="module" src="js/export.js"></script>
+  <script type="module" src="js/ui.js"></script>
 </body>
 </html>
