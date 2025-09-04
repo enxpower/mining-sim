@@ -1,31 +1,44 @@
-name: Sync private engine to public vendor
+name: Sync private engine to vendor
+
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
-    paths: [ ".github/workflows/sync-engine.yml" ]
+  schedule:
+    - cron: "7 3,15 * * *"  # 每天 03:07 和 15:07(UTC) 各拉一次
+  repository_dispatch:
+    types: [engine_built]    # 私库通知时触发
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # 允许往公库提交
     steps:
       - uses: actions/checkout@v4
-      - name: Download engine file from private repo
+
+      - name: Download ESM from private repo
         env:
-          GH_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}   # ← 就用这个名字
-          OWNER: your-org-or-user                      # TODO: 改成你的
-          PRIVATE_REPO: ems-engine                     # TODO: 改成你的私库名
-          ENGINE_PATH: dist/ems-engine.esm.js          # TODO: 私库里实际文件路径
+          GH_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}     # <- 这个 secret 放在【公库】里
+          OWNER: enxpower                                # TODO: 如有不同，请改组织/用户名
+          PRIVATE_REPO: ems-engine                       # TODO: 改你的私库名
+          ENGINE_PATH: dist/ems-engine.esm.js            # TODO: 改成你私库真正产物路径
         run: |
           mkdir -p vendor
-          curl -H "Authorization: token ${GH_TOKEN}" \
-               -H "Accept: application/vnd.github.v3.raw" \
-               -o vendor/ems-engine.esm.js \
-               https://api.github.com/repos/${OWNER}/${PRIVATE_REPO}/contents/${ENGINE_PATH}
-      - name: Commit vendor file
+          # 拉取私库中的构建产物(原始内容)
+          curl -fsSL \
+            -H "Authorization: token ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github.v3.raw" \
+            "https://api.github.com/repos/${OWNER}/${PRIVATE_REPO}/contents/${ENGINE_PATH}" \
+            -o vendor/ems-engine.esm.js
+
+      - name: Commit to vendor
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add vendor/ems-engine.esm.js
-          git commit -m "chore: sync engine to vendor" || echo "no changes"
-          git push
+          set -e
+          if ! git diff --quiet -- vendor/ems-engine.esm.js 2>/dev/null; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add vendor/ems-engine.esm.js
+            git commit -m "chore: sync engine"
+            git push
+          else
+            echo "No changes."
+          fi
