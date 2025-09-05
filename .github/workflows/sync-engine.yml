@@ -8,7 +8,8 @@ on:
     branches: [ main ]
     paths:
       - .github/workflows/sync-engine.yml
-
+permissions:
+  contents: write   # ← 允许 actions 对仓库内容有写权限
 jobs:
   sync:
     runs-on: ubuntu-latest
