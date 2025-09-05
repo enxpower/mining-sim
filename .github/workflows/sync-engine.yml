@@ -3,13 +3,11 @@ name: Sync engine from private release
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *" # 每6小时拉一次，可改
-  push:
-    branches: [ main ]
-    paths:
-      - .github/workflows/sync-engine.yml
+    - cron: '0 */6 * * *'   # 每6小时同步一次，可改
+
 permissions:
-  contents: write   # ← 允许 actions 对仓库内容有写权限
+  contents: write
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -17,24 +15,27 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Get latest release asset url
-        id: rel
         env:
           GH_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
         run: |
+          set -e
           owner_repo="enxpower/ems-engine"
-          url=$(gh api repos/$owner_repo/releases/latest --jq '.assets[] | select(.name=="core-browser.js") | .browser_download_url')
-          if [ -z "$url" ]; then echo "No core-browser.js in latest release"; exit 1; fi
-          echo "url=$url" >> $GITHUB_OUTPUT
-
-      - name: Download core-browser.js → modules/core.js
-        run: |
+          asset_name="core-browser.js"
+          api="https://api.github.com/repos/$owner_repo/releases/latest"
+          url=$(curl -s -H "Authorization: token $GH_TOKEN" "$api" | jq -r ".assets[] | select(.name==\"$asset_name\").browser_download_url")
+          if [ -z "$url" ] || [ "$url" = "null" ]; then
+            echo "No $asset_name in latest release"; exit 1; fi
           mkdir -p modules
-          curl -H "Authorization: token ${{ secrets.ENGINE_READ_TOKEN }}" -L "${{ steps.rel.outputs.url }}" -o modules/core.js
+          curl -L -H "Authorization: token $GH_TOKEN" -o modules/core.js "$url"
 
       - name: Commit if changed
         run: |
-          git config user.name "engine-sync-bot"
-          git config user.email "bot@users.noreply.github.com"
-          git add modules/core.js
-          git diff --cached --quiet || git commit -m "chore: sync engine core.js from private release"
-          git push
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git config user.name "engine-sync-bot"
+            git config user.email "bot@users.noreply.github.com"
+            git add modules/core.js
+            git commit -m "chore: sync engine core.js from private release"
+            git push
+          else
+            echo "No changes."
+          fi
