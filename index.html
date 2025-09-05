@@ -15,6 +15,7 @@
   label{display:block;font-size:12px;margin:6px 0 3px}
   input[type=number],input[type=range],select{width:100%;padding:7px 9px;border:1px solid #cbd5e1;border-radius:8px}
   input[type=range]{height:32px;padding:0}
+  /* Buttons */
   .btn{min-width:108px;height:38px;padding:0 14px;border:1.5px solid var(--btnbd);border-radius:10px;background:var(--btnbg);
        cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:600;transition:.15s ease;user-select:none}
   .btn:hover{background:var(--btnhover)}
@@ -23,7 +24,11 @@
   .kv{font-family:ui-monospace,Menlo,Consolas,monospace}
   canvas{width:100%;height:280px;background:#fff;border:1px solid #eee;border-radius:10px;display:block}
   .stack{position:relative}
-  .overlay{position:absolute;inset:8px;display:flex;align-items:center;justify-content:center;background:repeating-linear-gradient(45deg,#f9fafb,#f9fafb 10px,#f3f4f6 10px,#f3f4f6 20px);border:1px dashed #e5e7eb;border-radius:10px;color:#6b7280;font-size:14px;letter-spacing:.2px}
+  .overlay{
+    position:absolute;inset:8px;display:flex;align-items:center;justify-content:center;
+    background:repeating-linear-gradient(45deg,#f9fafb,#f9fafb 10px,#f3f4f6 10px,#f3f4f6 20px);
+    border:1px dashed #e5e7eb;border-radius:10px;color:#6b7280;font-size:14px;letter-spacing:.2px
+  }
   .overlay .pill{background:#fff;border:1px solid #e5e7eb;border-radius:999px;padding:6px 10px;display:flex;align-items:center;gap:8px}
   .legend{position:absolute; right:14px; top:10px; background:rgba(255,255,255,0.92); border:1px solid #e5e7eb; border-radius:8px; padding:6px 8px; font-size:12px}
   .legend-row{display:flex;align-items:center;gap:6px;margin:2px 0}
@@ -50,12 +55,148 @@
   <button id="langBtn" class="langbtn">EN | 中文</button>
 </div>
 
-<!-- Global & Geo (保持不变的表单区) -->
-<!-- 下面 DOM 结构与名称完全与原样一致（略）。为了篇幅，这里不再重复你已有的 HTML 表单；直接按你给的完整样例粘贴。 -->
-<!-- ……请把你样例中的所有表单卡片块粘贴在这里（与原样一致） …… -->
+<!-- Global & Geo -->
+<div class="row">
+  <div class="card">
+    <b data-i18n="global">Global</b>
+    <label><span data-i18n="simHours">Simulation length (hours)</span></label><input id="simHours" type="number" value="24" step="1" min="1">
+    <label><span data-i18n="dt">Time step dt (s)</span></label><input id="dt" type="number" value="0.5" step="0.1" min="0.05">
+    <label><span data-i18n="f0">Nominal frequency f0 (Hz)</span></label><input id="f0" type="number" value="60" step="1" min="40" max="65">
+    <label><span data-i18n="Dsys">System damping D (pu)</span></label><input id="Dsys" type="number" value="2.2" step="0.1">
+    <label><span data-i18n="alphaLoad">Load freq-sensitivity α (%/Hz)</span></label><input id="alphaLoad" type="number" value="2.0" step="0.1">
+    <div style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn" id="startBtn"><span>▶</span><span data-i18n="start">Start</span></button>
+      <button class="btn secondary" id="pauseBtn"><span>⏸</span><span data-i18n="pause">Pause</span></button>
+      <button class="btn secondary" id="resetBtn"><span>↺</span><span data-i18n="reset">Reset</span></button>
+    </div>
+  </div>
 
-<!-- 图表区：与原样一致 -->
-<!-- ……同样粘贴你样例中的两个图表卡片与 KPI & Log，与原样一致 …… -->
+  <div class="card">
+    <b data-i18n="geo">Geography / Insolation</b>
+    <label><span data-i18n="preset">Preset</span></label>
+    <select id="geoPreset">
+      <option value="custom" selected data-i18n="custom">Custom</option>
+      <option value="arctic" data-i18n="arctic">Arctic (φ≈70°N)</option>
+      <option value="desert" data-i18n="desert">Desert (φ≈25°N)</option>
+      <option value="africa" data-i18n="africa">Tropical Africa (φ≈10°N)</option>
+      <option value="andes" data-i18n="andes">Andes (φ≈20°S)</option>
+    </select>
+    <label><span data-i18n="lat">Latitude φ (°)</span></label><input id="latDeg" type="number" value="25" step="0.5" min="-75" max="75">
+    <label><span data-i18n="doy">Day-of-year (1–365)</span></label><input id="doy" type="number" value="172" step="1" min="1" max="365">
+    <label><span data-i18n="pvSoil">PV soiling (0.7–1)</span></label><input id="pvSoil" type="number" value="0.9" step="0.01" min="0.7" max="1">
+  </div>
+
+  <div class="card">
+    <b data-i18n="load_ren">Load / Renewables (0 to disable)</b>
+    <label><span data-i18n="Pload">Load baseline (MW)</span></label><input id="Pload" type="number" value="12" step="0.5" min="0">
+    <label><span data-i18n="loadVar">Load variation (MW)</span></label><input id="loadVar" type="number" value="1.2" step="0.2" min="0">
+    <hr>
+    <label><span data-i18n="PpvMax">PV max (MW)</span></label><input id="PpvMax" type="number" value="30" step="1" min="0">
+    <label><span data-i18n="pvShape">PV day-shape (1–3)</span></label><input id="pvShape" type="number" value="1.5" step="0.1" min="1" max="3">
+    <label><span data-i18n="pvCloud">Cloudiness (0–1)</span></label><input id="pvCloud" type="number" value="0.35" step="0.05" min="0" max="1">
+    <hr>
+    <label><span data-i18n="PwindMax">Wind max (MW)</span></label><input id="PwindMax" type="number" value="6" step="1" min="0">
+    <label><span data-i18n="windMean">Mean wind speed (m/s)</span></label><input id="windMean" type="number" value="8" step="0.5" min="0">
+    <label><span data-i18n="windVar">Wind variability (0–1)</span></label><input id="windVar" type="number" value="0.4" step="0.05" min="0" max="1">
+  </div>
+
+  <div class="card">
+    <b data-i18n="diesel">Diesel (VF)</b>
+    <label><span data-i18n="dg33n">3.3MW initial on-line (0–6)</span></label><input id="dg33n" type="number" value="3" step="1" min="0" max="6">
+    <label><span data-i18n="dg12n">1.25MW initial on-line (0–2)</span></label><input id="dg12n" type="number" value="0" step="1" min="0" max="2">
+    <label><span data-i18n="Rdg">Active power droop R<sub>P</sub> (%)</span></label><input id="Rdg" type="number" value="4" step="0.5">
+    <label><span data-i18n="dgMinPu">Per-unit min load</span></label><input id="dgMinPu" type="number" value="0.35" step="0.05">
+    <label><span data-i18n="rampUp">Ramp up (MW/s)</span></label><input id="rampUp" type="number" value="0.2" step="0.05">
+    <label><span data-i18n="rampDn">Ramp down (MW/s)</span></label><input id="rampDn" type="number" value="1.0" step="0.1">
+    <label><span data-i18n="dgDelay">Start/stop delay (s)</span></label><input id="dgDelay" type="number" value="600" step="30">
+    <label><span data-i18n="dgHyst">Start/stop hysteresis (MW)</span></label><input id="dgHyst" type="number" value="1.5" step="0.1">
+    <label><span data-i18n="allowOff">Allow all-off</span></label>
+    <select id="allowDieselOff"><option value="false" selected data-i18n="no">No (keep ≥1 online)</option><option value="true" data-i18n="yes">Yes</option></select>
+  </div>
+
+  <div class="card">
+    <b data-i18n="bess">BESS (VSG)</b>
+    <label><span>P<sub>max</sub> (MW)</span></label><input id="PbMax" type="number" value="8" step="0.5" min="0">
+    <label><span>E<sub>max</sub> (MWh)</span></label><input id="EbMax" type="number" value="20" step="1" min="0">
+    <label><span data-i18n="soc0">Initial SOC (%)</span></label><input id="soc0" type="number" value="60" step="1" min="0" max="100">
+    <label><span data-i18n="Rvsg">Droop R<sub>P</sub> (%)</span></label><input id="Rvsg" type="number" value="3" step="0.5">
+    <label><span data-i18n="Hvsg">Virtual inertia H (s)</span></label><input id="Hvsg" type="number" value="6.0" step="0.1">
+    <label><span data-i18n="socTarget">SOC target / band (% / %)</span></label>
+    <div class="row" style="gap:8px"><input id="socTarget" type="number" value="55"><input id="socBand" type="number" value="10"></div>
+    <label><span data-i18n="emg">Emergency: |Δf| / overload× / window (Hz / × / s)</span></label>
+    <div class="row" style="gap:8px"><input id="femg" type="number" value="0.2" step="0.05"><input id="overMul" type="number" value="1.4" step="0.1"><input id="overSec" type="number" value="8" step="1"></div>
+  </div>
+
+  <div class="card">
+    <b data-i18n="prot">Protection / Limiting</b>
+    <label><span data-i18n="rocMax">RoCoF max (Hz/s)</span></label><input id="rocMax" type="number" value="0.9" step="0.1">
+    <label><span data-i18n="hzw">Hz–W limit: k1(60.2–60.5)/k2(&gt;60.5)</span></label>
+    <div class="row" style="gap:8px"><input id="kof1" type="number" value="0.5" step="0.1"><input id="kof2" type="number" value="2.0" step="0.1"></div>
+    <label><span>OF1 thresh (Hz)/time (s)</span></label>
+    <div class="row" style="gap:8px"><input id="of1f" type="number" value="60.5" step="0.1"><input id="of1t" type="number" value="10" step="1"></div>
+    <label><span>OF2 thresh (Hz)/time (s)</span></label>
+    <div class="row" style="gap:8px"><input id="of2f" type="number" value="61.0" step="0.1"><input id="of2t" type="number" value="0.2" step="0.1"></div>
+    <label><span data-i18n="reclose">Reclose after trip (s)</span></label><input id="reclose" type="number" value="30" step="1">
+  </div>
+</div>
+
+<!-- Window control -->
+<div class="row">
+  <div class="card" style="flex:1 1 420px">
+    <b data-i18n="view">Window control (draggable)</b>
+    <label><span data-i18n="viewHours">Window length (hours)</span></label><input id="viewHours" type="number" value="4" step="0.5" min="0.5" disabled>
+    <label><span data-i18n="viewStart">Window start (hours)</span></label><input id="viewStart" type="range" min="0" max="20" step="0.1" value="0" disabled>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+      <label style="display:flex;align-items:center;gap:6px"><input id="followLive" type="checkbox" checked disabled> <span data-i18n="followLive">Follow live</span></label>
+      <span class="kv muted" id="viewLabel">[—, —] h</span>
+    </div>
+  </div>
+</div>
+
+<!-- Plots -->
+<div class="row">
+  <div class="card stack" style="flex:2 1 560px">
+    <b data-i18n="powerPlot">Power (MW) · Window</b>
+    <div class="legend">
+      <div class="legend-row"><div class="swatch" style="background:#E69F00"></div><span data-i18n="leg_pv">PV</span></div>
+      <div class="legend-row"><div class="swatch dash2" style="background-image:linear-gradient(90deg,#D55E00 0 30%,transparent 30% 55%,#D55E00 55% 100%)"></div><span data-i18n="leg_wind">Wind</span></div>
+      <div class="legend-row"><div class="swatch" style="background:#374151"></div><span data-i18n="leg_load">Load</span></div>
+      <div class="legend-row"><div class="swatch" style="background:#0072B2"></div><span data-i18n="leg_diesel">Diesel</span></div>
+      <div class="legend-row"><div class="swatch dash" style="background-image:linear-gradient(90deg,#009E73 0 40%,transparent 40% 60%,#009E73 60% 100%)"></div><span data-i18n="leg_bess">BESS (+dis/−ch)</span></div>
+      <div class="legend-row"><div class="swatch" style="background:#f59e0b;height:8px;width:8px;border-radius:50%"></div><span data-i18n="leg_sun">Sunrise/Sunset</span></div>
+    </div>
+    <canvas id="pPlot"></canvas>
+    <div id="pOverlay" class="overlay"><div class="pill"><i class="fa-solid fa-play"></i><span>Press Start to simulate</span></div></div>
+  </div>
+  <div class="card stack" style="flex:1 1 340px">
+    <b data-i18n="freqPlot">Frequency (Hz) / SOC (%) · Window</b>
+    <div class="legend">
+      <div class="legend-row"><div class="swatch" style="background:#6A3D9A"></div><span data-i18n="leg_freq">Freq</span></div>
+      <div class="legend-row"><div class="swatch dash" style="background-image:linear-gradient(90deg,#009E73 0 40%,transparent 40% 60%,#009E73 60% 100%)"></div><span data-i18n="leg_soc">SOC</span></div>
+      <div class="legend-row"><div class="swatch" style="background:#9ca3af;height:2px;width:18px"></div><span data-i18n="leg_f0">f₀=60 Hz baseline</span></div>
+    </div>
+    <canvas id="fPlot"></canvas>
+    <div id="fOverlay" class="overlay"><div class="pill"><i class="fa-solid fa-play"></i><span>Press Start to simulate</span></div></div>
+    <div id="live" class="kv muted" style="margin-top:6px">—</div>
+  </div>
+</div>
+
+<!-- KPI & Log -->
+<div class="card">
+  <b data-i18n="metrics">Metrics & Log</b>
+  <div class="kpi" id="kpiRow">
+    <div class="box"><b data-i18n="kpiFuel">Fuel use</b><span id="kpiFuel">—</span></div>
+    <div class="box"><b data-i18n="kpiFuelBase">Fuel (diesel baseline)</b><span id="kpiFuelBase">—</span></div>
+    <div class="box"><b data-i18n="kpiFuelSave">Fuel saved</b><span id="kpiFuelSave">—</span></div>
+    <div class="box"><b data-i18n="kpiRE">Renewables share</b><span id="kpiRE">—</span></div>
+    <div class="box"><b data-i18n="kpiPVgen">PV energy</b><span id="kpiPVgen">—</span></div>
+    <div class="box"><b data-i18n="kpiWDgen">Wind energy</b><span id="kpiWDgen">—</span></div>
+    <div class="box"><b data-i18n="kpiCurt">Curtailment (PV+Wind)</b><span id="kpiCurt">—</span></div>
+    <div class="box"><b data-i18n="kpiN1">N−1 check</b><span id="kpiN1">—</span></div>
+    <div class="box"><b data-i18n="kpiWin">Recent window</b><span id="kpiWin">—</span></div>
+  </div>
+  <div id="log" class="muted">[Idle] Press Start to begin simulation…</div>
+</div>
 
 <footer>
   <div>© 2025 Energize Solutions Inc. – All rights reserved.</div>
@@ -66,8 +207,20 @@
   </div>
 </footer>
 
-<!-- 先加载“从私库同步”的引擎，再加载 UI 逻辑 -->
+<!-- 仅加载外部脚本：引擎 + UI 驱动 -->
 <script src="modules/core.js"></script>
+<script>
+  // 若引擎未同步，给出友好提示（不改变你的 UI）
+  window.addEventListener('DOMContentLoaded', () => {
+    if (!window.EMS || !window.EMS.createEngine) {
+      const p = document.getElementById('pOverlay');
+      const f = document.getElementById('fOverlay');
+      const msg = '<div class="pill"><i class="fa-solid fa-triangle-exclamation"></i><span>Engine missing — please run sync action to fetch modules/core.js</span></div>';
+      if (p) p.innerHTML = msg;
+      if (f) f.innerHTML = msg;
+    }
+  });
+</script>
 <script src="app.js"></script>
 </body>
 </html>
