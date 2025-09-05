@@ -1,41 +1,46 @@
-name: Sync engine from private release
+name: Sync engine to vendor
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'   # 每6小时同步一次，可改
+    - cron: '0 */6 * * *'   # 每 6 小时同步一次，可按需调整
 
 permissions:
-  contents: write
+  contents: write            # 允许向公库提交
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout public repo
+        uses: actions/checkout@v4
 
-      - name: Get latest release asset url
-        env:
-          GH_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
-        run: |
-          set -e
-          owner_repo="enxpower/ems-engine"
-          asset_name="core-browser.js"
-          api="https://api.github.com/repos/$owner_repo/releases/latest"
-          url=$(curl -s -H "Authorization: token $GH_TOKEN" "$api" | jq -r ".assets[] | select(.name==\"$asset_name\").browser_download_url")
-          if [ -z "$url" ] || [ "$url" = "null" ]; then
-            echo "No $asset_name in latest release"; exit 1; fi
-          mkdir -p modules
-          curl -L -H "Authorization: token $GH_TOKEN" -o modules/core.js "$url"
+      - name: Checkout private engine
+        uses: actions/checkout@v4
+        with:
+          repository: enxpower/ems-engine        # ← 替换为你的私库
+          token: ${{ secrets.ENGINE_READ_TOKEN }} # ← 公库里配置好的 PAT
+          ref: main                               # 私库分支名
+          path: _engine
 
-      - name: Commit if changed
+      - name: Copy build artifacts
         run: |
-          if [[ -n "$(git status --porcelain)" ]]; then
-            git config user.name "engine-sync-bot"
-            git config user.email "bot@users.noreply.github.com"
-            git add modules/core.js
-            git commit -m "chore: sync engine core.js from private release"
-            git push
-          else
-            echo "No changes."
+          mkdir -p vendor modules
+          # 优先 IIFE（<script> 直接用），其次 ESM，最后是 modules 目录
+          if [ -f _engine/dist/ems-engine.iife.min.js ]; then
+            cp _engine/dist/ems-engine.iife.min.js vendor/ems-engine.iife.min.js
           fi
+          if [ -f _engine/dist/ems-engine.esm.js ]; then
+            cp _engine/dist/ems-engine.esm.js vendor/ems-engine.esm.js
+          fi
+          if [ -d _engine/modules ]; then
+            rm -rf modules && cp -r _engine/modules ./modules
+          fi
+
+      - name: Commit & push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add vendor modules
+          git commit -m "chore: sync engine $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "no changes"
+          git push
