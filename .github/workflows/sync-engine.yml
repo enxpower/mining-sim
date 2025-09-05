@@ -3,7 +3,7 @@ name: Sync engine from private release
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *" # 每6小时拉一次（可改）
+    - cron: "0 */6 * * *" # 每6小时拉一次，可改
   push:
     branches: [ main ]
     paths:
@@ -15,18 +15,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get latest release asset info
+      - name: Get latest release asset url
         id: rel
         env:
           GH_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
         run: |
           owner_repo="enxpower/ems-engine"
-          json=$(gh api repos/$owner_repo/releases/latest)
-          echo "$json" | jq -r '.assets[] | select(.name=="core-browser.js") | .browser_download_url' > url.txt
-          echo "url=$(cat url.txt)" >> $GITHUB_OUTPUT
+          url=$(gh api repos/$owner_repo/releases/latest --jq '.assets[] | select(.name=="core-browser.js") | .browser_download_url')
+          if [ -z "$url" ]; then echo "No core-browser.js in latest release"; exit 1; fi
+          echo "url=$url" >> $GITHUB_OUTPUT
 
-      - name: Download core-browser.js
+      - name: Download core-browser.js → modules/core.js
         run: |
+          mkdir -p modules
           curl -H "Authorization: token ${{ secrets.ENGINE_READ_TOKEN }}" -L "${{ steps.rel.outputs.url }}" -o modules/core.js
 
       - name: Commit if changed
