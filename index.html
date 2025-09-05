@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Microgrid Simulation UI · mining-sim</title>
+<link rel="stylesheet" href="/assets/tokens.css">
+<link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <div class="topbar">
+    <h1>Microgrid Simulation UI</h1>
+    <div class="actions">
+      <button id="btnStart" class="btn">▶ Start</button>
+      <button id="btnPause" class="btn secondary">⏸ Pause</button>
+      <button id="btnReset" class="btn secondary">↺ Reset</button>
+    </div>
+  </div>
+
+  <!-- Controls (示例，只保留极少数输入；你的完整控件可以直接搬过来) -->
+  <section class="card">
+    <b>Global</b>
+    <div class="grid">
+      <label>Sim hours <input id="simHours" type="number" value="4" step="1" min="1"></label>
+      <label>dt (s) <input id="dt" type="number" value="0.5" step="0.1" min="0.05"></label>
+    </div>
+  </section>
+
+  <!-- Plots -->
+  <section class="row">
+    <div class="card stack" style="flex:2 1 560px">
+      <b>Power (MW) · Window</b>
+      <canvas id="pPlot"></canvas>
+      <div id="pOverlay" class="overlay"><div class="pill">Press Start to simulate</div></div>
+    </div>
+    <div class="card stack" style="flex:1 1 340px">
+      <b>Frequency (Hz) / SOC (%) · Window</b>
+      <canvas id="fPlot"></canvas>
+      <div id="fOverlay" class="overlay"><div class="pill">Press Start to simulate</div></div>
+      <div id="live" class="kv muted" style="margin-top:6px">—</div>
+    </div>
+  </section>
+
+  <!-- KPI & Log -->
+  <section class="card">
+    <b>Metrics & Log</b>
+    <div class="kpi" id="kpiRow">
+      <div class="box"><b>Fuel use</b><span id="kpiFuel">—</span></div>
+      <div class="box"><b>Fuel (diesel baseline)</b><span id="kpiFuelBase">—</span></div>
+      <div class="box"><b>Fuel saved</b><span id="kpiFuelSave">—</span></div>
+      <div class="box"><b>RE share</b><span id="kpiRE">—</span></div>
+      <div class="box"><b>PV energy</b><span id="kpiPVgen">—</span></div>
+      <div class="box"><b>Wind energy</b><span id="kpiWDgen">—</span></div>
+      <div class="box"><b>Curtailment</b><span id="kpiCurt">—</span></div>
+      <div class="box"><b>N−1</b><span id="kpiN1">—</span></div>
+      <div class="box"><b>Window</b><span id="kpiWin">—</span></div>
+    </div>
+    <div id="log" class="muted">[Idle] Press Start…</div>
+  </section>
+
+  <footer>
+    <div>© 2025 Energize Solutions Inc. – All rights reserved.</div>
+    <div>Powered by GitHub Pages | Contact:
+      <a href="mailto:info@energizeos.com">info@energizeos.com</a></div>
+    <div class="social-icons">
+      <a href="https://www.linkedin.com/in/gongtiejing" target="_blank" aria-label="LinkedIn"><i class="fab fa-linkedin fa-lg"></i></a>
+      <a href="https://github.com/enxpower" target="_blank" aria-label="GitHub"><i class="fab fa-github fa-lg"></i></a>
+    </div>
+  </footer>
+
+  <!-- 载入装配器 -->
+  <script type="module" src="/modules/loader.js"></script>
+</body>
+</html>
