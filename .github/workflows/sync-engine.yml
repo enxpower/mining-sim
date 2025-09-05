@@ -1,0 +1,38 @@
+name: Sync engine from private release
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *" # 每6小时拉一次（可改）
+  push:
+    branches: [ main ]
+    paths:
+      - .github/workflows/sync-engine.yml
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get latest release asset info
+        id: rel
+        env:
+          GH_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
+        run: |
+          owner_repo="enxpower/ems-engine"
+          json=$(gh api repos/$owner_repo/releases/latest)
+          echo "$json" | jq -r '.assets[] | select(.name=="core-browser.js") | .browser_download_url' > url.txt
+          echo "url=$(cat url.txt)" >> $GITHUB_OUTPUT
+
+      - name: Download core-browser.js
+        run: |
+          curl -H "Authorization: token ${{ secrets.ENGINE_READ_TOKEN }}" -L "${{ steps.rel.outputs.url }}" -o modules/core.js
+
+      - name: Commit if changed
+        run: |
+          git config user.name "engine-sync-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add modules/core.js
+          git diff --cached --quiet || git commit -m "chore: sync engine core.js from private release"
+          git push
