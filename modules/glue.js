@@ -1,26 +1,49 @@
-let raf=null, running=false;
+/* modules/glue.js */
+import { renderMetrics, renderState, getScenario } from "./ui.js";
+import { appendPoint } from "./plots.js";
 
-export function run(core, plots, ui, config){
-  if(running) return; running=true; ui.setIdle(false);
-  const dt = Number(document.getElementById('dt').value || config.dt);
-  const windowHours = Number(document.getElementById('simHours').value || config.windowHours);
+let rafId = 0;
+let running = false;
+let t = 0; // seconds
 
-  const loop = () => {
-    if(!running) return;
-    const snap = core.step(dt);
-    // Live 行与 KPI 文本完全基于 snapshot（单一事实来源）
-    const df=(snap.f-60).toFixed(3);
-    ui.updateLive(
-      `t=${(snap.t/3600).toFixed(2)} h | f=${snap.f.toFixed(3)} Hz | Δf=${df>=0?'+':''}${df} Hz | `+
-      `PV=${snap.Ppv.toFixed(2)} | Wind=${snap.Pwind.toFixed(2)} | Diesel=${snap.Pdg.toFixed(2)} | `+
-      `BESS=${snap.Pb.toFixed(2)} | SOC=${snap.soc.toFixed(1)}% | Load=${snap.Pload.toFixed(2)} MW`
-    );
-    ui.updateKPI(snap);
-    plots.draw(snap, windowHours);
-    raf=requestAnimationFrame(loop);
+export async function run(core, plots, ui, conf) {
+  if (running) return;
+  running = true;
+
+  // 根据 UI 表单拿 scenario（不污染私库）
+  const scenario = getScenario();
+  await core.reset(conf, scenario);
+  t = 0;
+
+  const stepLoop = async () => {
+    if (!running) return;
+    // dt = 1s 基准（可升级为自适应/倍速）
+    const out = await core.step(1);
+    t += 1;
+
+    // out 需至少包含以下字段，私库可在内部映射
+    // { load, pv, wind, diesel, bess, fuelLph, soc, cumFuel, metrics, state }
+    appendPoint(t, out);
+    renderMetrics(out.metrics || {});
+    renderState(out.state || {});
+
+    rafId = requestAnimationFrame(stepLoop);
   };
-  raf=requestAnimationFrame(loop);
+
+  cancelAnimationFrame(rafId);
+  rafId = requestAnimationFrame(stepLoop);
 }
 
-export function pause(){ if(!raf) return; cancelAnimationFrame(raf); raf=null; running=false; }
-export function reset(core, plots, ui, config){ pause(); core.reset(); ui.setIdle(true); }
+export function pause() {
+  running = false;
+  cancelAnimationFrame(rafId);
+}
+
+export async function reset(core, plots, ui, conf) {
+  pause();
+  const scenario = getScenario();
+  await core.reset(conf, scenario);
+  // 清空 UI 面板数据展示
+  renderMetrics({});
+  renderState({});
+}
