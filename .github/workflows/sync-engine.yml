@@ -1,12 +1,12 @@
-name: Sync engine to vendor
+name: Sync private engine → public vendor
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'   # 每 6 小时同步一次，可按需调整
+    - cron: "0 */6 * * *"
 
 permissions:
-  contents: write            # 允许向公库提交
+  contents: write
 
 jobs:
   sync:
@@ -15,27 +15,43 @@ jobs:
       - name: Checkout public repo
         uses: actions/checkout@v4
 
-      - name: Checkout private engine
+      - name: Checkout private engine repo
         uses: actions/checkout@v4
         with:
-          repository: enxpower/ems-engine        # ← 替换为你的私库
-          token: ${{ secrets.ENGINE_READ_TOKEN }} # ← 公库里配置好的 PAT
-          ref: main                               # 私库分支名
+          repository: ${{ secrets.ENGINE_REPO || 'your-org/ems-engine' }}
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           path: _engine
 
-      - name: Copy build artifacts
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build engine (ESM)
+        working-directory: _engine
         run: |
-          mkdir -p vendor modules
-          # 优先 IIFE（<script> 直接用），其次 ESM，最后是 modules 目录
-          if [ -f _engine/dist/ems-engine.iife.min.js ]; then
-            cp _engine/dist/ems-engine.iife.min.js vendor/ems-engine.iife.min.js
-          fi
-          if [ -f _engine/dist/ems-engine.esm.js ]; then
-            cp _engine/dist/ems-engine.esm.js vendor/ems-engine.esm.js
-          fi
-          if [ -d _engine/modules ]; then
-            rm -rf modules && cp -r _engine/modules ./modules
-          fi
+          npm ci
+          npm run build
+          ls -la dist
+
+      - name: Copy artifact → vendor/core.esm.js
+        run: |
+          mkdir -p vendor
+          # 私库构建产物：dist/core-browser.js（见下方私库 build）
+          cp _engine/dist/core-browser.js vendor/core.esm.js
+
+      - name: Normalize manifest paths (force relative to repo root)
+        run: |
+          jq '.modules.core="./vendor/core.esm.js"' modules/manifest.json > modules/manifest.json.tmp
+          mv modules/manifest.json.tmp modules/manifest.json
+
+      - name: Stamp engine version into footer
+        run: |
+          REV=$(git -C _engine rev-parse --short HEAD || echo "-")
+          DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          # 将版本信息写入一个 JSON 文件，供 loader.js 读取备用（也可由引擎导出）
+          mkdir -p vendor
+          echo "{\"rev\":\"$REV\",\"builtAt\":\"$DATE\"}" > vendor/build.json
 
       - name: Commit & push
         run: |
