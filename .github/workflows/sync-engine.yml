@@ -1,4 +1,4 @@
-name: Sync private engine → public vendor
+name: Update endpoint & stamp build
 
 on:
   workflow_dispatch:
@@ -8,115 +8,36 @@ on:
 permissions:
   contents: write
 
-env:
-  # 如果没在“Actions → Variables”里设置 ENGINE_REPO，则默认用 <当前仓库Owner>/ems-engine
-  ENGINE_REPO_FALLBACK: ${{ format('{0}/ems-engine', github.repository_owner) }}
-
 jobs:
-  sync:
+  update:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
 
-      - name: Validate required secrets
+      - name: Validate ENGINE_API_BASE
         run: |
-          if [ -z "${{ secrets.ENGINE_READ_TOKEN }}" ]; then
-            echo "::error::Missing secret ENGINE_READ_TOKEN. Create a PAT with 'repo' scope and add as repository secret."
+          if [ -z "${{ vars.ENGINE_API_BASE }}" ]; then
+            echo "::error::Missing repository Variable ENGINE_API_BASE (e.g. https://ems-engine.your.workers.dev)"
             exit 1
           fi
 
-      - name: Resolve ENGINE_REPO
-        id: repo
-        run: |
-          REPO="${{ vars.ENGINE_REPO }}"
-          if [ -z "$REPO" ]; then
-            REPO="${{ env.ENGINE_REPO_FALLBACK }}"
-          fi
-          echo "repo=$REPO" >> $GITHUB_OUTPUT
-
-      - name: Checkout private engine repo
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ steps.repo.outputs.repo }}
-          token: ${{ secrets.ENGINE_READ_TOKEN }}
-          path: _engine
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      # ⬇️ 完整的“Build engine (ESM)”步骤（含 ci/install 分支与产物校验）
-      - name: Build engine (ESM)
-        working-directory: _engine
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Node: $(node -v)"
-          echo "NPM : $(npm -v)"
-
-          # 可选：启用 corepack 以便未来支持 pnpm/yarn（没有也不影响）
-          corepack enable || true
-
-          if [ -f package.json ]; then
-            echo "package.json found."
-
-            if [ -f package-lock.json ]; then
-              echo "package-lock.json found → using 'npm ci'"
-              npm ci --no-audit --no-fund
-            else
-              echo "No package-lock.json → using 'npm install'"
-              npm install --no-audit --no-fund --prefer-offline
-            fi
-
-            if npm run -s | grep -q "^  build$"; then
-              npm run build
-            elif [ -f scripts/build.mjs ]; then
-              echo "No npm script 'build', but scripts/build.mjs exists → node scripts/build.mjs"
-              node scripts/build.mjs
-            else
-              echo "::error::No build entry found. Provide 'npm run build' or scripts/build.mjs in the private repo."
-              exit 1
-            fi
-
-          else
-            echo "::error::No package.json in private repo (_engine). Cannot build."
-            exit 1
-          fi
-
-          echo "Artifacts in dist/:"
-          ls -la dist || true
-
-          # 期望产物：dist/core-browser.js
-          if [ ! -f dist/core-browser.js ]; then
-            echo "::error::Expected build artifact 'dist/core-browser.js' not found. Check your bundler output name."
-            exit 1
-          fi
-
-      - name: Copy artifact → vendor/core.esm.js
+      - name: Write vendor/endpoint.json
         run: |
           mkdir -p vendor
-          cp _engine/dist/core-browser.js vendor/core.esm.js
+          echo "{\"base\":\"${{ vars.ENGINE_API_BASE }}\"}" > vendor/endpoint.json
+          cat vendor/endpoint.json
 
-      - name: Normalize manifest paths (force relative)
+      - name: Stamp build.json (for footer/debug)
         run: |
-          jq '.modules.core="./vendor/core.esm.js"' modules/manifest.json > modules/manifest.json.tmp
-          mv modules/manifest.json.tmp modules/manifest.json
-
-      - name: Stamp engine version into footer
-        run: |
-          REV=$(git -C _engine rev-parse --short HEAD || echo "-")
+          mkdir -p vendor
           DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-          mkdir -p vendor
-          echo "{\"rev\":\"$REV\",\"builtAt\":\"$DATE\"}" > vendor/build.json
+          echo "{\"builtAt\":\"$DATE\"}" > vendor/build.json
 
       - name: Commit & push
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add vendor modules
-          git commit -m "chore: sync engine $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "no changes"
+          git add vendor
+          git commit -m "chore: update endpoint & stamp $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "no changes"
           git push
