@@ -1,58 +1,39 @@
-/* modules/loader.js — 基于 manifest 目录解析路径，装配 UI/绘图/引擎（RPC） */
-const $ = (s) => document.querySelector(s);
-const overlay = $("#pOverlay")?.parentElement.querySelector(".overlay");
-const fOverlay = $("#fOverlay");
-const live = $("#live");
-const engVer = document.createElement("div"); engVer.className="muted kv"; engVer.style.marginTop="4px";
-document.querySelector(".topbar")?.appendChild(engVer);
+/* modules/loader.js — DOM-safe boot, read endpoint.json, expose engine hooks */
 
-function showOverlay(msg, detail) {
-  if (!overlay) return;
-  overlay.innerHTML = `<div class="pill"><span>⚙️</span><span>${msg}</span></div>`;
-  overlay.style.display = 'flex';
-}
-function hideOverlay(){ if(overlay) overlay.style.display='none'; if(fOverlay) fOverlay.style.display='none'; }
+import { mountPowerPlot, mountFreqPlot } from './plots.js';
 
-async function loadJSON(url) {
-  const res = await fetch(url, { cache: "no-cache" });
-  if (!res.ok) throw new Error(`fetch ${url} -> ${res.status}`);
-  return res.json();
-}
-
-const manifestURL = new URL("./manifest.json", import.meta.url);
-const baseURL = new URL(".", manifestURL);
-
-async function dynImport(rel) { return import(new URL(rel, baseURL).href); }
-
-window.__engineReady = false;
-window.__engineError = null;
-
-(async () => {
-  try {
-    showOverlay("Loading engine…");
-    const M = await loadJSON(manifestURL.href);
-    const mod = M.modules;
-    const [core, ui, plots, glue, config] = await Promise.all([
-      dynImport(mod.core), dynImport(mod.ui), dynImport(mod.plots), dynImport(mod.glue), dynImport(mod.config)
-    ]);
-
-    const buildInfo = core?.buildInfo ?? { name:"ems-engine (remote)", version:"rpc", rev:"-", builtAt:"-" };
-    engVer.innerHTML = `Engine: <span class="kv">${buildInfo.name} ${buildInfo.version}</span> <span class="muted">(${buildInfo.rev}, ${buildInfo.builtAt})</span>`;
-
-    ui.mount("#config-form", {
-      onStart: () => glue.run(core, plots, ui, config.default || config),
-      onPause: () => glue.pause(),
-      onReset: () => glue.reset(core, plots, ui, config.default || config)
-    });
-    plots.mount("#pPlot", "#fPlot", live);
-
-    await core.init(config.default || config);
-    window.__engineReady = true;
-    hideOverlay();
-  } catch (e) {
-    console.error(e);
-    window.__engineError = String(e?.stack || e?.message || e);
-    showOverlay("Failed to load engine");
-    engVer.innerHTML = `Engine: <span class="kv">failed</span>`;
+export async function boot() {
+  // 等 DOM 就绪
+  if (document.readyState === 'loading') {
+    await new Promise(r => document.addEventListener('DOMContentLoaded', r, { once:true }));
   }
-})();
+
+  // 1) 安全挂载两个图表（容器 id 用现有布局里的）
+  //    你页面里左右两个图表卡片的容器，请确认 id：
+  //    - 功率曲线容器：#pPlot
+  //    - 频率/SOC 容器：#fPlot
+  const power = mountPowerPlot('#pPlot');
+  const freq  = mountFreqPlot('#fPlot');
+
+  // 2) 拉取 endpoint.json
+  let base = null;
+  try {
+    const resp = await fetch('./vendor/endpoint.json', { cache: 'no-cache' });
+    const cfg  = await resp.json();
+    base = (cfg && cfg.base) ? String(cfg.base).replace(/\/+$/, '') : null;
+  } catch (e) {
+    console.warn('[loader] endpoint.json not found or invalid', e);
+  }
+
+  // 在右上角 “Engine: …” 位置打个标记
+  const eg = document.querySelector('[data-engine-stamp]') || document.body;
+  eg.dataset.engineStamp = base ? `ok: ${base}` : 'offline';
+
+  // 3) 提供接口给 glue.js 调用
+  return {
+    charts: {
+      power, freq
+    },
+    endpoint: base,
+  };
+}
