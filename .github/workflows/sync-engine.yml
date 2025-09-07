@@ -1,39 +1,31 @@
 name: Update endpoint & stamp build
-
 on:
   workflow_dispatch:
   schedule:
     - cron: "0 */6 * * *"
-
 permissions:
   contents: write
-
 jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout public repo
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Validate ENGINE_API_BASE
         run: |
           if [ -z "${{ vars.ENGINE_API_BASE }}" ]; then
-            echo "::error::Missing repository Variable ENGINE_API_BASE (e.g. https://ems-engine.your.workers.dev)"
+            echo "::error::Missing repository Variable ENGINE_API_BASE"
             exit 1
           fi
-
       - name: Write vendor/endpoint.json
         run: |
           mkdir -p vendor
           echo "{\"base\":\"${{ vars.ENGINE_API_BASE }}\"}" > vendor/endpoint.json
           cat vendor/endpoint.json
-
-      - name: Stamp build.json (for footer/debug)
+      - name: Stamp build.json
         run: |
           mkdir -p vendor
           DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
           echo "{\"builtAt\":\"$DATE\"}" > vendor/build.json
-
       - name: Commit & push
         run: |
           git config user.name  "github-actions[bot]"
