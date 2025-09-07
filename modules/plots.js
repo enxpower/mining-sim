@@ -1,46 +1,118 @@
-let pCtx,fCtx,pCanvas,fCanvas,series=[];
-const COLORS={ pv:'#E69F00', wind:'#D55E00', load:'#374151', diesel:'#0072B2', bess:'#009E73', freq:'#6A3D9A' };
+/* modules/plots.js */
+let cvsPower, ctxPower, cvsEnergy, ctxEnergy;
+const MAX_POINTS = 1800; // 30min @ 1s
 
-export function mount(){
-  pCanvas = document.getElementById('pPlot'); fCanvas=document.getElementById('fPlot');
-  pCtx=pCanvas.getContext('2d'); fCtx=fCanvas.getContext('2d');
+function makeCanvas(selector) {
+  const c = document.querySelector(selector);
+  const ctx = c.getContext("2d");
+  // 物理像素提高清晰度
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  c.width = Math.max(600, Math.floor(w * dpr));
+  c.height = Math.max(260, Math.floor(h * dpr));
+  ctx.scale(dpr, dpr);
+  return [c, ctx, w, h];
 }
-function line(ctx,xs,ys,color, dashed=false, w=2.2){
-  ctx.beginPath(); dashed?ctx.setLineDash([6,6]):ctx.setLineDash([]);
-  xs.forEach((x,i)=> i?ctx.lineTo(x,ys[i]):ctx.moveTo(x,ys[i]));
-  ctx.strokeStyle=color; ctx.lineWidth=w; ctx.stroke(); ctx.setLineDash([]);
+
+export function mount(powerSel, energySel) {
+  [cvsPower, ctxPower]   = makeCanvas(powerSel);
+  [cvsEnergy, ctxEnergy] = makeCanvas(energySel);
+  window.addEventListener("resize", () => {
+    [cvsPower, ctxPower]   = makeCanvas(powerSel);
+    [cvsEnergy, ctxEnergy] = makeCanvas(energySel);
+  });
 }
 
-export function draw(snapshot, windowHours=4){
-  series.push(snapshot);
-  const DPR=window.devicePixelRatio||1;
-  const t = snapshot.t, t0 = Math.max(0, t - windowHours*3600), t1 = t;
+// 环形缓冲
+const series = {
+  power: { t: [], load: [], pv: [], wind: [], diesel: [], bess: [] },
+  energy: { t: [], fuelLph: [], soc: [], cumFuel: [] }
+};
 
-  // Power
-  const w=pCanvas.width=Math.floor(pCanvas.clientWidth*DPR);
-  const h=pCanvas.height=Math.floor(pCanvas.clientHeight*DPR);
-  const seg=series.filter(d=>d.t>=t0&&d.t<=t1); if(seg.length<2) return;
-  const xs=seg.map(d=>((d.t-t0)/(t1-t0))*(w-60)+40);
-  const allP=seg.flatMap(d=>[d.Ppv,d.Pwind,d.Pload,d.Pdg,d.Pb]);
-  const pmin=Math.min(0,...allP), pmax=Math.max(...allP,1);
-  const y=v=>(1-(v-pmin)/(pmax-pmin||1))*(h-36)+18;
-  pCtx.clearRect(0,0,w,h); pCtx.strokeStyle='#f3f4f6';
-  for(let i=0;i<5;i++){const yy=(i/4)*(h-36)+18; pCtx.beginPath(); pCtx.moveTo(40,yy); pCtx.lineTo(w-12,yy); pCtx.stroke();}
-  const map=k=>seg.map(d=>y(d[k]));
-  line(pCtx,xs,map('Ppv'),COLORS.pv);
-  line(pCtx,xs,map('Pwind'),COLORS.wind,true);
-  line(pCtx,xs,map('Pload'),COLORS.load);
-  line(pCtx,xs,map('Pdg'),COLORS.diesel);
-  line(pCtx,xs,map('Pb'),COLORS.bess);
+function pushSeries(s, t, obj, cap=MAX_POINTS) {
+  s.t.push(t); if (s.t.length>cap) s.t.shift();
+  for (const [k,v] of Object.entries(obj)) {
+    s[k].push(v);
+    if (s[k].length>cap) s[k].shift();
+  }
+}
 
-  // Freq/SOC
-  const wf=fCanvas.width=Math.floor(fCanvas.clientWidth*DPR);
-  const hf=fCanvas.height=Math.floor(fCanvas.clientHeight*DPR);
-  const fVals=seg.map(d=>d.f), sVals=seg.map(d=>d.soc), f0=60;
-  let fmin=Math.min(...fVals,f0-0.8), fmax=Math.max(...fVals,f0+0.8);
-  const yF=v=>(1-(v-fmin)/(fmax-fmin||1))*(hf-36)+18; const yS=v=>(1-(v-0)/100)*(hf-36)+18;
-  fCtx.clearRect(0,0,wf,hf); fCtx.strokeStyle='#f3f4f6';
-  for(let i=0;i<5;i++){const yy=(i/4)*(hf-36)+18; fCtx.beginPath(); fCtx.moveTo(40,yy); fCtx.lineTo(wf-12,yy); fCtx.stroke();}
-  line(fCtx,xs,fVals.map(yF),COLORS.freq);
-  line(fCtx,xs,sVals.map(yS),'#009E73',true);
+function drawAxes(ctx, w, h, yLabel) {
+  ctx.clearRect(0,0,w,h);
+  ctx.save();
+  ctx.strokeStyle="#e5e7eb"; ctx.lineWidth=1;
+  // x grid
+  for (let i=0;i<=10;i++){
+    const x=i*(w/10); ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke();
+  }
+  // y grid
+  for (let i=0;i<=6;i++){
+    const y=i*(h/6); ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+  }
+  ctx.fillStyle="#666"; ctx.font="12px ui-monospace,monospace";
+  ctx.fillText(yLabel, 6, 14);
+  ctx.restore();
+}
+
+function normalize(arr, h) {
+  if (arr.length===0) return [];
+  const mn = Math.min(...arr), mx = Math.max(...arr);
+  const span = (mx - mn) || 1;
+  return arr.map(v => h - ( (v - mn) / span ) * (h - 18));
+}
+
+function strokeLine(ctx, xs, ys) {
+  if (xs.length<2) return;
+  ctx.beginPath();
+  ctx.moveTo(xs[0], ys[0]);
+  for (let i=1;i<xs.length;i++) ctx.lineTo(xs[i], ys[i]);
+  ctx.stroke();
+}
+
+export function appendPoint(t, p /* {load,pv,wind,diesel,bess, fuelLph, soc, cumFuel} */) {
+  // POWER
+  pushSeries(series.power, t, {
+    load: p.load, pv: p.pv, wind: p.wind, diesel: p.diesel, bess: p.bess
+  });
+  // ENERGY
+  pushSeries(series.energy, t, {
+    fuelLph: p.fuelLph, soc: p.soc, cumFuel: p.cumFuel
+  });
+
+  // draw POWER
+  {
+    const ctx = ctxPower;
+    const w = cvsPower.clientWidth, h = cvsPower.clientHeight;
+    drawAxes(ctx, w, h, "kW");
+    const n = series.power.t.length;
+    const xs = Array.from({length:n}, (_,i)=> i*(w/(n-1||1)));
+    const yLoad  = normalize(series.power.load, h);
+    const yPV    = normalize(series.power.pv,   h);
+    const yWind  = normalize(series.power.wind, h);
+    const yDies  = normalize(series.power.diesel, h);
+    const yBess  = normalize(series.power.bess, h);
+    ctx.lineWidth=2;
+    // 不设特定颜色，遵循要求（除非用户指定）
+    strokeLine(ctx, xs, yLoad);
+    strokeLine(ctx, xs, yPV);
+    strokeLine(ctx, xs, yWind);
+    strokeLine(ctx, xs, yDies);
+    strokeLine(ctx, xs, yBess);
+  }
+
+  // draw ENERGY
+  {
+    const ctx = ctxEnergy;
+    const w = cvsEnergy.clientWidth, h = cvsEnergy.clientHeight;
+    drawAxes(ctx, w, h, "SOC / Fuel");
+    const n = series.energy.t.length;
+    const xs = Array.from({length:n}, (_,i)=> i*(w/(n-1||1)));
+    const yFuel  = normalize(series.energy.fuelLph, h);
+    const ySOC   = normalize(series.energy.soc,     h);
+    const yCum   = normalize(series.energy.cumFuel, h);
+    ctx.lineWidth=2;
+    strokeLine(ctx, xs, yFuel);
+    strokeLine(ctx, xs, ySOC);
+    strokeLine(ctx, xs, yCum);
+  }
 }
