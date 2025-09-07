@@ -8,6 +8,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # 优先使用仓库“Variables”里配置的 ENGINE_REPO（例如 enxpower/ems-engine）
+  # 若未配置，则默认使用 <当前仓库Owner>/ems-engine
+  ENGINE_REPO_FALLBACK: ${{ format('{0}/ems-engine', github.repository_owner) }}
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -15,11 +20,28 @@ jobs:
       - name: Checkout public repo
         uses: actions/checkout@v4
 
+      # 显式校验 Secret 是否存在，防止空值导致后续 checkout 报 "token not supplied"
+      - name: Validate required secrets
+        run: |
+          if [ -z "${{ secrets.ENGINE_READ_TOKEN }}" ]; then
+            echo "::error::Missing secret ENGINE_READ_TOKEN. Create a PAT with 'repo' scope and add as repository secret."
+            exit 1
+          fi
+
+      - name: Resolve ENGINE_REPO
+        id: repo
+        run: |
+          REPO="${{ vars.ENGINE_REPO }}"
+          if [ -z "$REPO" ]; then
+            REPO="${{ env.ENGINE_REPO_FALLBACK }}"
+          fi
+          echo "repo=$REPO" >> $GITHUB_OUTPUT
+
       - name: Checkout private engine repo
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.ENGINE_REPO || 'your-org/ems-engine' }}
-          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          repository: ${{ steps.repo.outputs.repo }}
+          token: ${{ secrets.ENGINE_READ_TOKEN }}
           path: _engine
 
       - name: Setup Node
@@ -37,10 +59,10 @@ jobs:
       - name: Copy artifact → vendor/core.esm.js
         run: |
           mkdir -p vendor
-          # 私库构建产物：dist/core-browser.js（见下方私库 build）
+          # 私库产物：请确保构建生成 dist/core-browser.js
           cp _engine/dist/core-browser.js vendor/core.esm.js
 
-      - name: Normalize manifest paths (force relative to repo root)
+      - name: Normalize manifest paths (force relative)
         run: |
           jq '.modules.core="./vendor/core.esm.js"' modules/manifest.json > modules/manifest.json.tmp
           mv modules/manifest.json.tmp modules/manifest.json
@@ -49,7 +71,6 @@ jobs:
         run: |
           REV=$(git -C _engine rev-parse --short HEAD || echo "-")
           DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-          # 将版本信息写入一个 JSON 文件，供 loader.js 读取备用（也可由引擎导出）
           mkdir -p vendor
           echo "{\"rev\":\"$REV\",\"builtAt\":\"$DATE\"}" > vendor/build.json
 
