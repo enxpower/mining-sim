@@ -9,18 +9,17 @@ permissions:
   contents: write
 
 env:
-  # 优先使用仓库“Variables”里配置的 ENGINE_REPO（例如 enxpower/ems-engine）
-  # 若未配置，则默认使用 <当前仓库Owner>/ems-engine
+  # 如果没在“Actions → Variables”里设置 ENGINE_REPO，则默认用 <当前仓库Owner>/ems-engine
   ENGINE_REPO_FALLBACK: ${{ format('{0}/ems-engine', github.repository_owner) }}
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout public repo
         uses: actions/checkout@v4
 
-      # 显式校验 Secret 是否存在，防止空值导致后续 checkout 报 "token not supplied"
       - name: Validate required secrets
         run: |
           if [ -z "${{ secrets.ENGINE_READ_TOKEN }}" ]; then
@@ -49,17 +48,57 @@ jobs:
         with:
           node-version: '20'
 
+      # ⬇️ 完整的“Build engine (ESM)”步骤（含 ci/install 分支与产物校验）
       - name: Build engine (ESM)
         working-directory: _engine
+        shell: bash
         run: |
-          npm ci
-          npm run build
-          ls -la dist
+          set -euo pipefail
+
+          echo "Node: $(node -v)"
+          echo "NPM : $(npm -v)"
+
+          # 可选：启用 corepack 以便未来支持 pnpm/yarn（没有也不影响）
+          corepack enable || true
+
+          if [ -f package.json ]; then
+            echo "package.json found."
+
+            if [ -f package-lock.json ]; then
+              echo "package-lock.json found → using 'npm ci'"
+              npm ci --no-audit --no-fund
+            else
+              echo "No package-lock.json → using 'npm install'"
+              npm install --no-audit --no-fund --prefer-offline
+            fi
+
+            if npm run -s | grep -q "^  build$"; then
+              npm run build
+            elif [ -f scripts/build.mjs ]; then
+              echo "No npm script 'build', but scripts/build.mjs exists → node scripts/build.mjs"
+              node scripts/build.mjs
+            else
+              echo "::error::No build entry found. Provide 'npm run build' or scripts/build.mjs in the private repo."
+              exit 1
+            fi
+
+          else
+            echo "::error::No package.json in private repo (_engine). Cannot build."
+            exit 1
+          fi
+
+          echo "Artifacts in dist/:"
+          ls -la dist || true
+
+          # 期望产物：dist/core-browser.js
+          if [ ! -f dist/core-browser.js ]; then
+            echo "::error::Expected build artifact 'dist/core-browser.js' not found. Check your bundler output name."
+            exit 1
+          fi
 
       - name: Copy artifact → vendor/core.esm.js
         run: |
           mkdir -p vendor
-          # 私库产物：请确保构建生成 dist/core-browser.js
           cp _engine/dist/core-browser.js vendor/core.esm.js
 
       - name: Normalize manifest paths (force relative)
