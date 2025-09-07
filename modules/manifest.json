@@ -1,10 +1,10 @@
 {
-  "version": "2.4.0",
+  "version": 1,
   "modules": {
-    "core": "/modules/core.js",
-    "ui": "/modules/ui.js",
-    "plots": "/modules/plots.js",
-    "glue": "/modules/glue.js",
-    "config": "/modules/config.js"
+    "core": "./vendor/core.esm.js",
+    "ui": "./modules/ui.js",
+    "plots": "./modules/plots.js",
+    "glue": "./modules/glue.js",
+    "config": "./modules/config.js"
   }
 }
