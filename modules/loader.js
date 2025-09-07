@@ -1,6 +1,20 @@
-/* modules/loader.js — DOM-safe boot, read endpoint.json, expose engine hooks */
+/* modules/loader.js — DOM 安全启动、读取 endpoint、导出引导对象 */
 
-import { mountPowerPlot, mountFreqPlot } from './plots.js';
+import { mountPowerPlotById, mountFreqSocPlotById } from './plots.js';
+
+function showOverlay(msg, detail = '') {
+  const ovl = document.getElementById('overlay');
+  const m   = document.getElementById('overlay-msg');
+  const log = document.getElementById('overlay-log');
+  if (!ovl) return;
+  ovl.classList.add('show');
+  if (m)   m.textContent = msg || '';
+  if (log) log.textContent = detail || '';
+}
+function hideOverlay() {
+  const ovl = document.getElementById('overlay');
+  if (ovl) ovl.classList.remove('show');
+}
 
 export async function boot() {
   // 等 DOM 就绪
@@ -8,32 +22,39 @@ export async function boot() {
     await new Promise(r => document.addEventListener('DOMContentLoaded', r, { once:true }));
   }
 
-  // 1) 安全挂载两个图表（容器 id 用现有布局里的）
-  //    你页面里左右两个图表卡片的容器，请确认 id：
-  //    - 功率曲线容器：#pPlot
-  //    - 频率/SOC 容器：#fPlot
-  const power = mountPowerPlot('#pPlot');
-  const freq  = mountFreqPlot('#fPlot');
+  // 顶部版本角标
+  const verEl = document.getElementById('engine-version');
 
-  // 2) 拉取 endpoint.json
+  // 1) 安全挂载两张图：ID 对应你的 index.html
+  const power = mountPowerPlotById('plot-power');
+  const freq  = mountFreqSocPlotById('plot-energy'); // 右侧面板：频率+SOC
+
+  // 2) 读取 endpoint.json（公库 CI 写入）
   let base = null;
   try {
     const resp = await fetch('./vendor/endpoint.json', { cache: 'no-cache' });
     const cfg  = await resp.json();
     base = (cfg && cfg.base) ? String(cfg.base).replace(/\/+$/, '') : null;
   } catch (e) {
-    console.warn('[loader] endpoint.json not found or invalid', e);
+    console.warn('[loader] endpoint.json not found/invalid', e);
   }
+  if (verEl) verEl.innerHTML = base
+    ? `Engine: <span class="ok">online</span> · <span style="font-family:ui-monospace">${base}</span>`
+    : `Engine: <span class="warn">offline</span>`;
 
-  // 在右上角 “Engine: …” 位置打个标记
-  const eg = document.querySelector('[data-engine-stamp]') || document.body;
-  eg.dataset.engineStamp = base ? `ok: ${base}` : 'offline';
+  // 3) 绑定控制按钮（ID 对应你的 index.html）
+  const startBtn = document.getElementById('btn-start');
+  const pauseBtn = document.getElementById('btn-pause');
+  const resetBtn = document.getElementById('btn-reset');
 
-  // 3) 提供接口给 glue.js 调用
+  // 4) 返回给 glue.js 使用的句柄
   return {
-    charts: {
-      power, freq
-    },
+    charts: { power, freq },
     endpoint: base,
+    ui: { startBtn, pauseBtn, resetBtn, verEl, overlay: { showOverlay, hideOverlay } },
+    out: {
+      liveMetrics: document.getElementById('live-metrics'),
+      liveState:   document.getElementById('live-state'),
+    }
   };
 }
