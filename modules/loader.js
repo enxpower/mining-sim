@@ -1,60 +1,191 @@
-/* modules/loader.js — DOM 安全启动、读取 endpoint、导出引导对象 */
+// modules/loader.js
+// Glue：读 endpoint、初始化 UI、绑定按钮、驱动绘图 & 状态面板
+import { mountConfig, readConfig } from './ui.js';
+import { initPlots, updatePlots, setIdle } from './plots.js';
 
-import { mountPowerPlotById, mountFreqSocPlotById } from './plots.js';
+const OVL = {
+  root: document.getElementById('overlay'),
+  msg: document.getElementById('overlay-msg'),
+  log: document.getElementById('overlay-log'),
+};
+const E = {
+  ver: document.getElementById('engine-version'),
+  btnStart: document.getElementById('btn-start'),
+  btnPause: document.getElementById('btn-pause'),
+  btnReset: document.getElementById('btn-reset'),
+  liveMetrics: document.getElementById('live-metrics'),
+  liveState: document.getElementById('live-state'),
+};
 
-function showOverlay(msg, detail = '') {
-  const ovl = document.getElementById('overlay');
-  const m   = document.getElementById('overlay-msg');
-  const log = document.getElementById('overlay-log');
-  if (!ovl) return;
-  ovl.classList.add('show');
-  if (m)   m.textContent = msg || '';
-  if (log) log.textContent = detail || '';
+let running = false;
+let tHandle = null;
+let engine = null;        // 从私库 Worker 暴露的 ESM 模块
+let state = null;         // 引擎内部状态（由私库实现）
+let tickMs = 200;         // 前端刷新节拍
+let endpointBase = null;  // /vendor/endpoint.json 里的 base
+
+function showOverlay(text, extra) {
+  if (!OVL.root) return;
+  OVL.root.classList.add('show');
+  if (OVL.msg) OVL.msg.textContent = text || '';
+  if (OVL.log && extra) OVL.log.textContent = String(extra);
 }
 function hideOverlay() {
-  const ovl = document.getElementById('overlay');
-  if (ovl) ovl.classList.remove('show');
+  if (!OVL.root) return;
+  OVL.root.classList.remove('show');
+  if (OVL.msg) OVL.msg.textContent = '';
+  if (OVL.log) OVL.log.textContent = '';
 }
 
-export async function boot() {
-  // 等 DOM 就绪
-  if (document.readyState === 'loading') {
-    await new Promise(r => document.addEventListener('DOMContentLoaded', r, { once:true }));
-  }
+async function fetchEndpoint() {
+  const res = await fetch('./vendor/endpoint.json', { cache: 'no-store' });
+  if (!res.ok) throw new Error(`endpoint.json ${res.status}`);
+  const j = await res.json();
+  if (!j.base) throw new Error('endpoint.json missing "base"');
+  endpointBase = j.base.replace(/\/+$/, '');
+  return endpointBase;
+}
 
-  // 顶部版本角标
-  const verEl = document.getElementById('engine-version');
-
-  // 1) 安全挂载两张图：ID 对应你的 index.html
-  const power = mountPowerPlotById('plot-power');
-  const freq  = mountFreqSocPlotById('plot-energy'); // 右侧面板：频率+SOC
-
-  // 2) 读取 endpoint.json（公库 CI 写入）
-  let base = null;
+async function loadEngine() {
+  // 私库 Worker 提供的模块入口统一：/v1/engine.mjs
+  // 允许 CORS：Worker 端需设置 ALLOWED_ORIGIN 为你的 Pages 域名
+  const url = `${endpointBase}/v1/engine.mjs`;
   try {
-    const resp = await fetch('./vendor/endpoint.json', { cache: 'no-cache' });
-    const cfg  = await resp.json();
-    base = (cfg && cfg.base) ? String(cfg.base).replace(/\/+$/, '') : null;
+    const m = await import(/* @vite-ignore */ url);
+    if (!m || typeof m.createEngine !== 'function') {
+      throw new Error('engine.mjs missing createEngine()');
+    }
+    return m;
   } catch (e) {
-    console.warn('[loader] endpoint.json not found/invalid', e);
+    throw new Error(`Failed to import engine: ${url}\n${e?.message || e}`);
   }
-  if (verEl) verEl.innerHTML = base
-    ? `Engine: <span class="ok">online</span> · <span style="font-family:ui-monospace">${base}</span>`
-    : `Engine: <span class="warn">offline</span>`;
+}
 
-  // 3) 绑定控制按钮（ID 对应你的 index.html）
-  const startBtn = document.getElementById('btn-start');
-  const pauseBtn = document.getElementById('btn-pause');
-  const resetBtn = document.getElementById('btn-reset');
+function setButtons({ start, pause }) {
+  if (E.btnStart) E.btnStart.disabled = !start;
+  if (E.btnPause) E.btnPause.disabled = !pause;
+}
 
-  // 4) 返回给 glue.js 使用的句柄
-  return {
-    charts: { power, freq },
-    endpoint: base,
-    ui: { startBtn, pauseBtn, resetBtn, verEl, overlay: { showOverlay, hideOverlay } },
-    out: {
-      liveMetrics: document.getElementById('live-metrics'),
-      liveState:   document.getElementById('live-state'),
+function renderVersion(v) {
+  if (!E.ver) return;
+  const text = v ? `Engine: ${v}` : 'Engine: loading...';
+  E.ver.innerHTML = text;
+}
+
+function fmt(n, unit) {
+  if (n==null || Number.isNaN(n)) return '—';
+  const s = n.toLocaleString(undefined, { maximumFractionDigits: Math.abs(n)<10?2:1 });
+  return unit ? `${s} ${unit}` : s;
+}
+
+function renderPanels(s) {
+  if (E.liveState) {
+    E.liveState.textContent = JSON.stringify({
+      t_s: s?.t_s, scenario: s?.scenario, flags: s?.flags,
+    }, null, 2);
+  }
+  if (E.liveMetrics) {
+    E.liveMetrics.textContent = [
+      `p_load_kW : ${fmt(s?.kW?.load, 'kW')}`,
+      `p_pv_kW  : ${fmt(s?.kW?.pv, 'kW')}`,
+      `p_wind_kW: ${fmt(s?.kW?.wind, 'kW')}`,
+      `p_diesel_kW: ${fmt(s?.kW?.diesel, 'kW')}`,
+      `p_bess_kW: ${fmt(s?.kW?.bess, 'kW')}`,
+      `fuel_lph : ${fmt(s?.fuel?.lph, 'L/h')}`,
+      `fuel_cum : ${fmt(s?.fuel?.cum_l, 'L')}`,
+      `soc      : ${fmt(s?.bess?.soc*100, '%')}`,
+    ].join('  ');
+  }
+}
+
+async function start() {
+  if (!engine) {
+    showOverlay('Loading engine…');
+    try {
+      await fetchEndpoint();
+      engine = await loadEngine();
+      hideOverlay();
+    } catch (e) {
+      showOverlay('Engine load failed', e?.stack || e);
+      console.error(e);
+      return;
+    }
+  }
+
+  // 读取表单为场景参数（公库 UI -> 私库引擎）
+  const scenario = readConfig();
+  try {
+    // 私库必须实现 createEngine(scenario)
+    state = await engine.createEngine(scenario);
+    renderVersion(state?.version || '(unknown)');
+  } catch (e) {
+    showOverlay('createEngine() failed', e?.stack || e);
+    console.error(e);
+    return;
+  }
+
+  // 启动画图
+  initPlots();
+  setIdle(false);
+  setButtons({ start:false, pause:true });
+  running = true;
+
+  const loop = async () => {
+    if (!running) return;
+    try {
+      // 私库必须实现 step(state)
+      const snap = await engine.step(state);
+      updatePlots(snap);
+      renderPanels(snap);
+      tHandle = setTimeout(loop, tickMs);
+    } catch (e) {
+      console.error(e);
+      showOverlay('Runtime error', e?.stack || e);
+      setButtons({ start:true, pause:false });
+      running = false;
     }
   };
+  loop();
 }
+
+function pause() {
+  running = false;
+  if (tHandle) clearTimeout(tHandle);
+  setButtons({ start:true, pause:false });
+}
+
+function reset() {
+  pause();
+  setIdle(true);
+  renderPanels(null);
+  renderVersion(null);
+}
+
+function safeBind(el, evt, fn) {
+  if (!el) return;
+  el.addEventListener(evt, fn);
+}
+
+function boot() {
+  // 装表单
+  mountConfig(document.getElementById('config-form'));
+  // 绑按钮
+  safeBind(E.btnStart, 'click', start);
+  safeBind(E.btnPause, 'click', pause);
+  safeBind(E.btnReset, 'click', reset);
+  // 初始空闲态
+  setIdle(true);
+  setButtons({ start:true, pause:false });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
+}
+
+// 便于你在控制台自检
+window.__sim = {
+  ping() { return { ok: true, endpointBase }; },
+  pause, reset,
+};
