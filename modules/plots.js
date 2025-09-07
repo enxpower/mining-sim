@@ -1,133 +1,125 @@
-/* modules/plots.js — 安全挂载 + 轻量绘图 */
+// modules/plots.js
+// 负责把私库 step() 的快照画到两个 <canvas>
 
-const DPR = window.devicePixelRatio || 1;
+let P, E;        // canvas ctx
+let cP, cE;      // canvas node
+let inited = false;
 
-function ensureCanvasById(id) {
+function acquireCanvas(id) {
   const el = document.getElementById(id);
-  if (!el) {
-    console.warn('[plots] container not found:', id);
-    return null;
-  }
-  // 如果不是 <canvas>，自动创建并替换
-  let cvs = el.tagName === 'CANVAS' ? el : null;
-  if (!cvs) {
-    el.innerHTML = '';
-    cvs = document.createElement('canvas');
-    cvs.style.width = '100%';
-    cvs.style.height = '260px';
-    el.appendChild(cvs);
-  }
-  const widthCSS  = (el.clientWidth || 640);
-  const heightCSS = 260;
-  cvs.width  = Math.max(320, widthCSS) * DPR;
-  cvs.height = heightCSS * DPR;
-
-  const ctx = cvs.getContext('2d');
-  if (!ctx) {
-    console.warn('[plots] getContext failed for', id);
-    return null;
-  }
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  return { cvs, ctx, el };
+  if (!el) return { el:null, ctx:null };
+  // 适配 HiDPI
+  const dpr = window.devicePixelRatio || 1;
+  el.width  = Math.max(300, el.clientWidth  * dpr);
+  el.height = Math.max(200, el.clientHeight * dpr);
+  const ctx = el.getContext('2d');
+  return { el, ctx };
 }
 
-function drawGrid(ctx, w, h) {
-  ctx.save();
-  ctx.strokeStyle = '#eef2f7';
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i++) {
-    const y = 10 + (h - 20) * (i / 4);
-    ctx.beginPath(); ctx.moveTo(40, y); ctx.lineTo(w - 12, y); ctx.stroke();
+export function initPlots() {
+  ({ el: cP, ctx: P } = acquireCanvas('plot-power'));
+  ({ el: cE, ctx: E } = acquireCanvas('plot-energy'));
+  inited = !!(P && E);
+  if (!inited) {
+    console.warn('plots: canvas not ready');
   }
-  ctx.restore();
+  window.addEventListener('resize', () => {
+    if (!cP || !cE) return;
+    initPlots(); // 重新尺寸
+  }, { passive:true });
 }
 
-function drawLine(ctx, xs, ys, color = '#111', dash = []) {
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
-  ctx.setLineDash(dash);
+export function setIdle(idle = true) {
+  if (!inited) initPlots();
+  if (!P || !E) return;
+
+  const paint = (ctx, label) => {
+    const { width:w, height:h } = ctx.canvas;
+    ctx.clearRect(0,0,w,h);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(0,0,w,h);
+    ctx.strokeStyle = '#e5e7eb';
+    ctx.setLineDash([6,6]);
+    ctx.strokeRect(8,8,w-16,h-16);
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#6b7280';
+    ctx.font = `${12*(window.devicePixelRatio||1)}px sans-serif`;
+    ctx.fillText(idle? 'Press Start' : label, 16, 24);
+  };
+
+  paint(P, 'Power (kW) · live');
+  paint(E, 'Energy / Fuel / SOC · live');
+}
+
+function line(ctx, xs, ys, style) {
   ctx.beginPath();
-  for (let i = 0; i < xs.length; i++) (i ? ctx.lineTo(xs[i], ys[i]) : ctx.moveTo(xs[i], ys[i]));
+  for (let i=0;i<xs.length;i++) (i?ctx.lineTo(xs[i],ys[i]):ctx.moveTo(xs[i],ys[i]));
+  ctx.strokeStyle = style || '#111';
+  ctx.lineWidth = 2;
   ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.restore();
 }
 
-/** 功率窗口：PV/Wind/Load/Diesel/BESS */
-export function mountPowerPlotById(id) {
-  const box = ensureCanvasById(id);
-  if (!box) return { ok:false, draw:()=>{} };
+const q = []; // 最近窗口的样条缓冲
+const maxPoints = 600;
 
-  const { cvs, ctx, el } = box;
-  function resize() {
-    cvs.width  = Math.max(320, el.clientWidth || 640) * DPR;
-    cvs.height = 260 * DPR;
+export function updatePlots(snap) {
+  if (!inited) initPlots();
+  if (!P || !E || !snap) return;
+
+  // 累积窗口（等距采样）
+  q.push({
+    t: snap.t_s || 0,
+    Ppv: snap.kW?.pv || 0,
+    Pw:  snap.kW?.wind || 0,
+    Pd:  snap.kW?.diesel || 0,
+    Pb:  snap.kW?.bess || 0,
+    PL:  snap.kW?.load || 0,
+    fuel: snap.fuel?.cum_l || 0,
+    soc:  (snap.bess?.soc ?? 0)*100
+  });
+  if (q.length > maxPoints) q.shift();
+
+  // ---- Power canvas
+  {
+    const { width:w, height:h } = P.canvas;
+    P.clearRect(0,0,w,h);
+
+    const xs = q.map((_,i)=> 12 + (i/(q.length-1||1))*(w-24));
+    const allP = q.flatMap(d => [d.Ppv, d.Pw, d.Pd, d.Pb, d.PL]);
+    const mn = Math.min(0, ...allP), mx = Math.max(1, ...allP);
+    const y = v => (1-(v-mn)/(mx-mn||1))*(h-30)+15;
+
+    // grid
+    P.strokeStyle = '#eef2f7'; P.lineWidth=1;
+    for (let i=0;i<5;i++){ const yy=15 + i*((h-30)/4); P.beginPath(); P.moveTo(10,yy); P.lineTo(w-10,yy); P.stroke(); }
+
+    line(P, xs, q.map(d=>y(d.PL)), '#374151'); // Load
+    line(P, xs, q.map(d=>y(d.Ppv)), '#E69F00'); // PV
+    line(P, xs, q.map(d=>y(d.Pw )), '#D55E00'); // Wind
+    line(P, xs, q.map(d=>y(d.Pd )), '#0072B2'); // Diesel
+    line(P, xs, q.map(d=>y(d.Pb )), '#009E73'); // BESS
   }
 
-  function draw(seg) {
-    const w = (cvs.width / DPR), h = (cvs.height / DPR);
-    ctx.clearRect(0, 0, w, h);
-    if (!seg || seg.length < 2) return drawGrid(ctx, w, h);
+  // ---- Energy / SOC canvas
+  {
+    const { width:w, height:h } = E.canvas;
+    E.clearRect(0,0,w,h);
 
-    drawGrid(ctx, w, h);
-    const t0 = seg[0].t, t1 = seg[seg.length - 1].t;
-    const x = t => 40 + (w - 60) * ((t - t0) / Math.max(1e-6, t1 - t0));
+    const xs = q.map((_,i)=> 12 + (i/(q.length-1||1))*(w-24));
+    const socMin = 0, socMax = 100;
+    const ySoc = v => (1-(v-socMin)/(socMax-socMin||1))*(h-30)+15;
 
-    const all = seg.flatMap(d => [d.Ppv, d.Pwind, d.Pload, d.Pdg, d.Pb]);
-    const ymin = Math.min(0, ...all), ymax = Math.max(1, ...all);
-    const y = v => 10 + (h - 20) * (1 - (v - ymin) / Math.max(1e-6, ymax - ymin));
+    // grid
+    E.strokeStyle = '#eef2f7'; E.lineWidth=1;
+    for (let i=0;i<5;i++){ const yy=15 + i*((h-30)/4); E.beginPath(); E.moveTo(10,yy); E.lineTo(w-10,yy); E.stroke(); }
 
-    const xs = seg.map(d => x(d.t));
-    drawLine(ctx, xs, seg.map(d => y(d.Ppv)),   '#E69F00');        // PV
-    drawLine(ctx, xs, seg.map(d => y(d.Pwind)), '#D55E00', [6,6]); // Wind
-    drawLine(ctx, xs, seg.map(d => y(d.Pload)), '#374151');        // Load
-    drawLine(ctx, xs, seg.map(d => y(d.Pdg)),   '#0072B2');        // Diesel
-    drawLine(ctx, xs, seg.map(d => y(d.Pb)),    '#009E73');        // BESS
+    line(E, xs, q.map(d=>ySoc(d.soc)), '#6A3D9A');
+
+    // fuel cumulative（次轴简单归一）
+    const fmn = Math.min(...q.map(d=>d.fuel)), fmx = Math.max(...q.map(d=>d.fuel), 1);
+    const yFuel = v => (1-(v-fmn)/(fmx-fmn||1))*(h-30)+15;
+    E.setLineDash([6,6]);
+    line(E, xs, q.map(d=>yFuel(d.fuel)), '#9CA3AF');
+    E.setLineDash([]);
   }
-
-  window.addEventListener('resize', () => { resize(); draw([]); });
-  return { ok:true, draw };
-}
-
-/** 频率 / SOC（你的右侧“Energy / Fuel / SOC”面板我们用频率+SOC曲线展示，更直观） */
-export function mountFreqSocPlotById(id) {
-  const box = ensureCanvasById(id);
-  if (!box) return { ok:false, draw:()=>{} };
-
-  const { cvs, ctx, el } = box;
-
-  function resize() {
-    cvs.width  = Math.max(320, el.clientWidth || 640) * DPR;
-    cvs.height = 260 * DPR;
-  }
-
-  function draw(seg, f0 = 60) {
-    const w = (cvs.width / DPR), h = (cvs.height / DPR);
-    ctx.clearRect(0, 0, w, h);
-    if (!seg || seg.length < 2) return drawGrid(ctx, w, h);
-
-    drawGrid(ctx, w, h);
-    const t0 = seg[0].t, t1 = seg[seg.length - 1].t;
-    const x = t => 40 + (w - 60) * ((t - t0) / Math.max(1e-6, t1 - t0));
-
-    const fv = seg.map(d => d.f);
-    let fmin = Math.min(f0 - 0.8, ...fv), fmax = Math.max(f0 + 0.8, ...fv);
-    if (!isFinite(fmin) || !isFinite(fmax) || (fmax - fmin) < 0.1) { fmin = f0 - 0.8; fmax = f0 + 0.8; }
-    const yF = v => 10 + (h - 20) * (1 - (v - fmin) / Math.max(1e-6, fmax - fmin));
-    const yS = v => 10 + (h - 20) * (1 - v / 100); // SOC 0~100%
-
-    const xs = seg.map(d => x(d.t));
-    drawLine(ctx, xs, seg.map(d => yF(d.f)),  '#6A3D9A');   // Freq
-    drawLine(ctx, xs, seg.map(d => yS(d.soc ?? 0)), '#009E73', [6,6]); // SOC
-
-    // f0 baseline
-    ctx.save();
-    ctx.strokeStyle = '#9ca3af'; ctx.lineWidth = 1; ctx.setLineDash([4,4]);
-    ctx.beginPath(); ctx.moveTo(40, yF(f0)); ctx.lineTo(w - 12, yF(f0)); ctx.stroke();
-    ctx.restore();
-  }
-
-  window.addEventListener('resize', () => { resize(); draw([]); });
-  return { ok:true, draw };
 }
