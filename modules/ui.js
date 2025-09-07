@@ -1,49 +1,70 @@
-let els={}, handlers={};
+/* modules/ui.js */
+const $ = (s) => document.querySelector(s);
 
-export function mount(){
-  els = {
-    start: document.getElementById('btnStart'),
-    pause: document.getElementById('btnPause'),
-    reset: document.getElementById('btnReset'),
-    live:  document.getElementById('live'),
-    log:   document.getElementById('log'),
-    pOverlay: document.getElementById('pOverlay'),
-    fOverlay: document.getElementById('fOverlay'),
-    kpi: {
-      fuel: 'kpiFuel', fuelBase:'kpiFuelBase', fuelSave:'kpiFuelSave',
-      re:'kpiRE', pv:'kpiPVgen', wd:'kpiWDgen', curt:'kpiCurt', n1:'kpiN1', win:'kpiWin'
-    }
+let handlers = { onStart: null, onPause: null, onReset: null };
+let running = false;
+
+export function mount(containerSelector, h) {
+  handlers = h || handlers;
+
+  const el = typeof containerSelector === "string" ? document.querySelector(containerSelector) : containerSelector;
+  if (!el) throw new Error("ui.mount container missing");
+
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(120px,1fr));gap:8px">
+      <label> Diesel Min Loading (%)<br/><input id="f-minload" type="number" value="30" min="0" max="80"/></label>
+      <label> BESS Energy (MWh)<br/><input id="f-bess-mwh" type="number" value="10" min="0.5" step="0.5"/></label>
+      <label> PV Cap (MW)<br/><input id="f-pv-mw" type="number" value="5" min="0" step="0.5"/></label>
+      <label> Wind Cap (MW)<br/><input id="f-wind-mw" type="number" value="6" min="0" step="0.5"/></label>
+    </div>
+  `;
+
+  $("#btn-start")?.addEventListener("click", () => {
+    if (running) return;
+    running = true;
+    $("#btn-start").disabled = true;
+    $("#btn-pause").disabled = false;
+    handlers.onStart?.();
+  });
+
+  $("#btn-pause")?.addEventListener("click", () => {
+    if (!running) return;
+    running = false;
+    $("#btn-start").disabled = false;
+    $("#btn-pause").disabled = true;
+    handlers.onPause?.();
+  });
+
+  $("#btn-reset")?.addEventListener("click", () => {
+    running = false;
+    $("#btn-start").disabled = false;
+    $("#btn-pause").disabled = true;
+    handlers.onReset?.(getScenario());
+  });
+}
+
+export function getScenario() {
+  const v = (id) => Number(document.getElementById(id)?.value || 0);
+  return {
+    dieselMinLoadingPct: v("f-minload"),
+    bessMWh: v("f-bess-mwh"),
+    pvMW: v("f-pv-mw"),
+    windMW: v("f-wind-mw"),
   };
-  els.start.onclick = () => handlers.start && handlers.start();
-  els.pause.onclick = () => handlers.pause && handlers.pause();
-  els.reset.onclick = () => handlers.reset && handlers.reset();
 }
 
-export function onStart(fn){ handlers.start=fn; }
-export function onPause(fn){ handlers.pause=fn; }
-export function onReset(fn){ handlers.reset=fn; }
-
-export function setIdle(isIdle){
-  [els.pOverlay, els.fOverlay].forEach(x=> x.style.display = isIdle?'flex':'none');
-  if(isIdle){ els.live.textContent='—'; els.log.textContent='[Idle] Press Start…'; els.log.classList.add('muted'); }
-  else { els.log.classList.remove('muted'); }
+export function renderMetrics(m) {
+  const box = document.querySelector("#live-metrics");
+  if (!box) return;
+  const lines = [];
+  for (const [k, v] of Object.entries(m || {})) {
+    lines.push(`${k.padEnd(18, " ")} : ${typeof v === "number" ? v.toFixed?.(3) ?? v : v}`);
+  }
+  box.textContent = lines.join("\n");
 }
 
-export function updateLive(text){ els.live.textContent=text; }
-export function logLine(s){ els.log.textContent += s+'\n'; els.log.scrollTop=els.log.scrollHeight; }
-
-export function updateKPI(snapshot){
-  const q = (id)=>document.getElementById(id);
-  const fmt=(v,u)=>v.toLocaleString(undefined,{maximumFractionDigits:(Math.abs(v)<10?2:1)})+(u?(" "+u):"");
-  const k = snapshot.kpi;
-  q(els.kpi.fuel).textContent=fmt(k.fuelL,'L');
-  q(els.kpi.fuelBase).textContent=fmt(k.fuelBase,'L');
-  q(els.kpi.fuelSave).textContent=fmt(Math.max(0,k.fuelBase-k.fuelL),'L');
-  const RE = k.pvDir + k.windDir;
-  q(els.kpi.re).textContent=fmt(k.Eload>0?100*RE/k.Eload:0,'%');
-  q(els.kpi.pv).textContent=fmt(k.pvWh,'MWh');
-  q(els.kpi.wd).textContent=fmt(k.windWh,'MWh');
-  q(els.kpi.curt).textContent=fmt(k.curtWh,'MWh');
-  q(els.kpi.n1).textContent=k.n1?'OK':'Not Met';
-  q(els.kpi.win).textContent=`t=${(snapshot.t/3600).toFixed(2)} h`;
+export function renderState(s) {
+  const box = document.querySelector("#live-state");
+  if (!box) return;
+  box.textContent = JSON.stringify(s || {}, null, 2);
 }
