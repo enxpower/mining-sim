@@ -1,5 +1,5 @@
 /* modules/loader.js
- * 动态装配：相对路径，适配 GitHub Pages 项目子路径
+ * 以 manifest.json 的实际 URL 为基准解析所有模块路径，避免 /repo 子路径和二次叠加
  */
 const $ = (s) => document.querySelector(s);
 
@@ -19,14 +19,22 @@ function hideOverlay() {
   ovlLog.textContent = "";
 }
 
-async function loadManifest() {
-  // 相对路径，避免 /repo 子路径 404
-  const res = await fetch("./modules/manifest.json", { cache: "no-cache" });
-  if (!res.ok) throw new Error(`manifest fetch ${res.status}`);
+async function loadJSON(url) {
+  const res = await fetch(url, { cache: "no-cache" });
+  if (!res.ok) throw new Error(`fetch ${url} -> ${res.status}`);
   return res.json();
 }
 
-// 全局诊断标志（可用于外部截图监控）
+// 关键：用 manifest 的目录作为解析基准
+const manifestURL = new URL("./manifest.json", import.meta.url);
+const baseURL = new URL(".", manifestURL);
+
+async function dynImport(relPath) {
+  // 支持绝对/相对；相对路径按 manifest 目录解析
+  const url = new URL(relPath, baseURL).href;
+  return import(url);
+}
+
 window.__engineReady = false;
 window.__engineError = null;
 
@@ -34,33 +42,31 @@ window.__engineError = null;
   try {
     showOverlay("Loading simulator…");
 
-    const M = await loadManifest();
-    const baseConfig = M?.modules;
-    if (!baseConfig) throw new Error("manifest modules missing");
+    const M = await loadJSON(manifestURL.href);
+    const mod = M?.modules;
+    if (!mod) throw new Error("manifest.modules missing");
 
-    // 并行加载所有模块
+    // 并行加载（全部以 manifest 目录为基准解析）
     const [core, ui, plots, glue, config] = await Promise.all([
-      import(baseConfig.core),
-      import(baseConfig.ui),
-      import(baseConfig.plots),
-      import(baseConfig.glue),
-      import(baseConfig.config)
+      dynImport(mod.core),
+      dynImport(mod.ui),
+      dynImport(mod.plots),
+      dynImport(mod.glue),
+      dynImport(mod.config)
     ]);
 
-    // 引擎版本号（可由私库导出 buildInfo）
     const buildInfo = core?.buildInfo ?? { name: "ems-engine", version: "unknown", rev: "-", builtAt: "-" };
     engVer.innerHTML = `Engine: <span class="ok">${buildInfo.name} v${buildInfo.version}</span> <span class="muted">(${buildInfo.rev}, ${buildInfo.builtAt})</span>`;
 
-    // 初始化 UI & PLOTS & GLUE
+    // UI/Plots/Glue 装配
     ui.mount("#config-form", {
       onStart: () => glue.run(core, plots, ui, config.default || config),
       onPause: () => glue.pause(),
       onReset: () => glue.reset(core, plots, ui, config.default || config),
     });
-
     plots.mount("#plot-power", "#plot-energy");
 
-    // 预初始化引擎（加载配置、准备内部缓存）
+    // 引擎预初始化
     await core.init(config.default || config);
 
     window.__engineReady = true;
