@@ -1,7 +1,7 @@
 {
   "version": 1,
   "modules": {
-    "core": "../vendor/core.esm.js",
+    "core": "./vendor/core.esm.js",
     "ui": "./ui.js",
     "plots": "./plots.js",
     "glue": "./glue.js",
