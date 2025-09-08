@@ -1,8 +1,9 @@
 // modules/ui.js
+// 负责渲染“Scenario Config”表单，并提供读取配置的方法
+// 只暴露公开参数；核心算法仍在私库里
 
-// 生成“Scenario Config”表单（与你 index.html 的结构解耦）
-// 注意：只提供公开参数；核心算法在私库里
-export function mountConfig(root) {
+/** 渲染配置表单 */
+export function mountUI(root) {
   if (!root) return;
   root.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -22,23 +23,26 @@ export function mountConfig(root) {
   `;
 }
 
-// ✅ 与 loader.js 保持兼容：提供 mountUI()
-export function mountUI() {
-  const root = document.querySelector('#scenario-config');
-  mountConfig(root);
-}
-
-// 读取配置参数
+/** 读取表单配置，返回给私库引擎作为“公开形参” */
 export function readConfig() {
-  const val = id => parseFloat(document.getElementById(id)?.value ?? '0') || 0;
-  return {
-    dieselMinLoadingPct: val('cfg_dgMin'),
-    bessMWh: val('cfg_Eb'),
-    pvMW: val('cfg_Ppv'),
-    windMW: val('cfg_Pw'),
+  const num = (id, def = 0) => {
+    const el = document.getElementById(id);
+    const v = el?.value ?? def;
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : def;
+  };
 
-    // 默认运行常量
+  return {
+    dieselMinLoadingPct: num('cfg_dgMin', 30),
+    bessMWh:             num('cfg_Eb',   10),
+    pvMW:                num('cfg_Ppv',   5),
+    windMW:              num('cfg_Pw',    6),
+
+    // UI 层可见的一些默认运行常量；真正算法仍在私库里
     tickSeconds: 0.5,
     f0: 60,
   };
 }
+
+// 为了兼容你之前粘贴的 mountConfig 名称（可有可无）
+export const mountConfig = mountUI;
