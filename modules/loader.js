@@ -1,130 +1,107 @@
-// modules/loader.js
-// Glue：读 endpoint、初始化 UI、绑定按钮、驱动绘图 & 状态面板
-import { mountConfig, readConfig } from './ui.js';
-import { initPlots, updatePlots, setIdle } from './plots.js';
+// modules/loader.js  —— 公库唯一入口
+import { mountUI, readConfig } from './ui.js';
+import { initPlots, updatePlots } from './plots.js';
 
-const OVL = {
-  root: document.getElementById('overlay'),
-  msg: document.getElementById('overlay-msg'),
-  log: document.getElementById('overlay-log'),
-};
-const E = {
-  ver: document.getElementById('engine-version'),
-  btnStart: document.getElementById('btn-start'),
-  btnPause: document.getElementById('btn-pause'),
-  btnReset: document.getElementById('btn-reset'),
-  liveMetrics: document.getElementById('live-metrics'),
-  liveState: document.getElementById('live-state'),
-};
+const q = sel => document.querySelector(sel);
+const elStart = q('#btn-start');
+const elPause = q('#btn-pause');
+const elReset = q('#btn-reset');
+const elVersion = q('#engine-version');
+const overlay = q('#overlay');
+const overlayMsg = q('#overlay-msg');
+const overlayLog = q('#overlay-log');
 
+let engine = null;
 let running = false;
+let tickMs = 200;
 let tHandle = null;
-let engine = null;        // 从私库 Worker 暴露的 ESM 模块
-let state = null;         // 引擎内部状态（由私库实现）
-let tickMs = 200;         // 前端刷新节拍
-let endpointBase = null;  // /vendor/endpoint.json 里的 base
+let state = { samples: [] };
 
-function showOverlay(text, extra) {
-  if (!OVL.root) return;
-  OVL.root.classList.add('show');
-  if (OVL.msg) OVL.msg.textContent = text || '';
-  if (OVL.log && extra) OVL.log.textContent = String(extra);
+function showOverlay(title, log) {
+  overlay.classList.add('show');
+  overlayMsg.textContent = title || '...';
+  overlayLog.textContent = String(log || '');
 }
-function hideOverlay() {
-  if (!OVL.root) return;
-  OVL.root.classList.remove('show');
-  if (OVL.msg) OVL.msg.textContent = '';
-  if (OVL.log) OVL.log.textContent = '';
+function hideOverlay(){ overlay.classList.remove('show'); }
+function setIdle(isIdle) {
+  elStart.disabled = !isIdle;
+  elPause.disabled = isIdle;
+}
+function setButtons({start, pause}) {
+  elStart.disabled = !start;
+  elPause.disabled = !pause;
+}
+function renderVersion(text) {
+  elVersion.innerHTML = `Engine: <em>${text}</em>`;
+}
+function renderPanels(snap){
+  // 你页面里“Live Metrics / Engine State”的渲染可在这里补；演示先略过
 }
 
-async function fetchEndpoint() {
+// 读取 endpoint
+async function readEndpoint() {
   const res = await fetch('./vendor/endpoint.json', { cache: 'no-store' });
   if (!res.ok) throw new Error(`endpoint.json ${res.status}`);
   const j = await res.json();
-  if (!j.base) throw new Error('endpoint.json missing "base"');
-  endpointBase = j.base.replace(/\/+$/, '');
-  return endpointBase;
+  const base = String(j.base || '').replace(/\/+$/,'');
+  if (!/^https?:\/\//.test(base)) throw new Error('Invalid base in endpoint.json');
+  return base;
 }
 
+// 动态加载引擎
 async function loadEngine() {
-  // 私库 Worker 提供的模块入口统一：/v1/engine.mjs
-  // 允许 CORS：Worker 端需设置 ALLOWED_ORIGIN 为你的 Pages 域名
-  const url = `${endpointBase}/v1/engine.mjs`;
+  const base = await readEndpoint();
+  const url = new URL('/v1/engine.mjs', base);
+  url.searchParams.set('v', String(Date.now())); // 防缓存
+
+  let mod;
   try {
-    const m = await import(/* @vite-ignore */ url);
-    if (!m || typeof m.createEngine !== 'function') {
-      throw new Error('engine.mjs missing createEngine()');
-    }
-    return m;
+    mod = await import(url.toString());
   } catch (e) {
-    throw new Error(`Failed to import engine: ${url}\n${e?.message || e}`);
-  }
-}
-
-function setButtons({ start, pause }) {
-  if (E.btnStart) E.btnStart.disabled = !start;
-  if (E.btnPause) E.btnPause.disabled = !pause;
-}
-
-function renderVersion(v) {
-  if (!E.ver) return;
-  const text = v ? `Engine: ${v}` : 'Engine: loading...';
-  E.ver.innerHTML = text;
-}
-
-function fmt(n, unit) {
-  if (n==null || Number.isNaN(n)) return '—';
-  const s = n.toLocaleString(undefined, { maximumFractionDigits: Math.abs(n)<10?2:1 });
-  return unit ? `${s} ${unit}` : s;
-}
-
-function renderPanels(s) {
-  if (E.liveState) {
-    E.liveState.textContent = JSON.stringify({
-      t_s: s?.t_s, scenario: s?.scenario, flags: s?.flags,
-    }, null, 2);
-  }
-  if (E.liveMetrics) {
-    E.liveMetrics.textContent = [
-      `p_load_kW : ${fmt(s?.kW?.load, 'kW')}`,
-      `p_pv_kW  : ${fmt(s?.kW?.pv, 'kW')}`,
-      `p_wind_kW: ${fmt(s?.kW?.wind, 'kW')}`,
-      `p_diesel_kW: ${fmt(s?.kW?.diesel, 'kW')}`,
-      `p_bess_kW: ${fmt(s?.kW?.bess, 'kW')}`,
-      `fuel_lph : ${fmt(s?.fuel?.lph, 'L/h')}`,
-      `fuel_cum : ${fmt(s?.fuel?.cum_l, 'L')}`,
-      `soc      : ${fmt(s?.bess?.soc*100, '%')}`,
-    ].join('  ');
-  }
-}
-
-async function start() {
-  if (!engine) {
-    showOverlay('Loading engine…');
-    try {
-      await fetchEndpoint();
-      engine = await loadEngine();
-      hideOverlay();
-    } catch (e) {
-      showOverlay('Engine load failed', e?.stack || e);
-      console.error(e);
-      return;
-    }
+    showOverlay('Engine load failed', `import: ${url}\n\n${e?.stack || e}`);
+    throw e;
   }
 
-  // 读取表单为场景参数（公库 UI -> 私库引擎）
-  const scenario = readConfig();
+  if (!mod || typeof mod.createEngine !== 'function') {
+    const keys = Object.keys(mod||{});
+    showOverlay('createEngine() not found', `export keys: ${keys.join(', ')}`);
+    throw new Error('createEngine not found');
+  }
+
+  let inst;
   try {
-    // 私库必须实现 createEngine(scenario)
-    state = await engine.createEngine(scenario);
-    renderVersion(state?.version || '(unknown)');
+    inst = await mod.createEngine(await readConfig());
   } catch (e) {
     showOverlay('createEngine() failed', e?.stack || e);
+    throw e;
+  }
+
+  if (!inst || typeof inst.step !== 'function') {
+    const keys = Object.keys(inst||{});
+    showOverlay('engine.step missing', `engine keys: ${keys.join(', ')}`);
+    throw new Error('engine.step missing');
+  }
+
+  engine = inst;
+  renderVersion('loaded');
+}
+
+// 事件：开始
+async function start() {
+  try {
+    hideOverlay();
+    if (!engine) {
+      renderVersion('loading…');
+      await loadEngine();
+      renderVersion('ready');
+    }
+  } catch (e) {
     console.error(e);
+    renderVersion('load-failed');
     return;
   }
 
-  // 启动画图
+  // 画布
   initPlots();
   setIdle(false);
   setButtons({ start:false, pause:true });
@@ -133,10 +110,11 @@ async function start() {
   const loop = async () => {
     if (!running) return;
     try {
-      // 私库必须实现 step(state)
+      // 关键：调用引擎 step
       const snap = await engine.step(state);
-      updatePlots(snap);
-      renderPanels(snap);
+      state = snap || state;
+      updatePlots(state);
+      renderPanels(state);
       tHandle = setTimeout(loop, tickMs);
     } catch (e) {
       console.error(e);
@@ -156,36 +134,28 @@ function pause() {
 
 function reset() {
   pause();
-  setIdle(true);
+  state = { samples: [] };
   renderPanels(null);
-  renderVersion(null);
+  renderVersion('<em>loading…</em>');
 }
 
-function safeBind(el, evt, fn) {
-  if (!el) return;
-  el.addEventListener(evt, fn);
-}
-
-function boot() {
-  // 装表单
-  mountConfig(document.getElementById('config-form'));
-  // 绑按钮
-  safeBind(E.btnStart, 'click', start);
-  safeBind(E.btnPause, 'click', pause);
-  safeBind(E.btnReset, 'click', reset);
-  // 初始空闲态
+// 绑定 UI
+window.addEventListener('DOMContentLoaded', () => {
+  mountUI();
   setIdle(true);
-  setButtons({ start:true, pause:false });
-}
+  renderVersion('<em>loading…</em>');
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', boot);
-} else {
-  boot();
-}
+  elStart.addEventListener('click', start);
+  elPause.addEventListener('click', pause);
+  elReset.addEventListener('click', reset);
 
-// 便于你在控制台自检
-window.__sim = {
-  ping() { return { ok: true, endpointBase }; },
-  pause, reset,
-};
+  // 页面加载时先探测后端
+  readEndpoint()
+    .then(base => {
+      renderVersion(`probing ${new URL('/status.json', base).origin}…`);
+      return fetch(new URL('/status.json', base), { cache:'no-store' });
+    })
+    .then(r => r.ok ? r.json() : { error: r.status })
+    .then(info => renderVersion(info?.version ? `v${info.version}` : 'ready'))
+    .catch(e => showOverlay('Backend probe failed', e?.stack || e));
+});
