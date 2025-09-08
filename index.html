@@ -5,41 +5,25 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Off-Grid Mining Microgrid · EMS Simulator</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="./assets/styles.css">
+  <!-- 样式：你的设计令牌 + 页面样式 -->
   <link rel="stylesheet" href="./assets/tokens.css">
+  <link rel="stylesheet" href="./assets/styles.css">
   <style>
-    /* 轻量兜底样式，避免空白 */
-    body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,"Noto Sans",sans-serif;color:#111;background:#fff;margin:14px}
-    .container{max-width:1200px;margin:0 auto}
-    header{display:flex;justify-content:space-between;align-items:center;margin:10px 0 6px}
-    h1{font-size:18px;margin:0}
-    .row{display:flex;flex-wrap:wrap;gap:12px;margin:10px 0}
-    .card{border:1px solid #d1d5db;border-radius:12px;padding:12px;background:#fff;flex:1 1 340px}
-    canvas{width:100%;height:260px;background:#fafafa;border:1px dashed #e5e7eb;border-radius:10px}
-    .controls button{padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;background:#fff;cursor:pointer}
+    /* 按钮的基础样式（保持轻量） */
+    .controls button{padding:8px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;cursor:pointer}
     .controls button:disabled{opacity:.5;cursor:not-allowed}
-    footer{margin:18px 0 6px;color:#666;font-size:12px}
-    /* overlay */
-    #overlay{position:fixed;inset:0;background:rgba(255,255,255,.95);display:none;align-items:center;justify-content:center;z-index:9999}
-    #overlay.show{display:flex}
-    .ovl-card{max-width:560px;border:1px solid #e5e7eb;border-radius:14px;background:#fff;padding:18px}
-    .ovl-card h3{margin:0 0 8px}
-    .kv{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;background:#0b1021;color:#d1e4ff;border-radius:10px;padding:10px;overflow:auto;max-height:220px;font-size:12px}
-    .muted{color:#666;font-size:12px}
-    .ok{color:#0a7a0a}
-    .warn{color:#b45309}
-    .err{color:#b91c1c}
   </style>
 </head>
 <body>
   <div class="container">
-    <header>
-      <h1>Off-Grid Mining Microgrid · V2 · Fuel-Saving Baseline</h1>
+    <header style="display:flex;justify-content:space-between;align-items:center;margin:8px 0 6px">
+      <h1 style="font-size:18px;margin:0">Off-Grid Mining Microgrid · V2 · Fuel-Saving Baseline</h1>
       <div id="engine-version" class="muted">Engine: <em>loading…</em></div>
     </header>
 
-    <div class="row">
-      <div class="card" id="config-card">
+    <div class="grid">
+      <!-- 左侧配置 -->
+      <div class="card area-config">
         <h3>Scenario Config</h3>
         <div id="config-form"></div>
         <div class="controls" style="margin-top:10px;display:flex;gap:8px">
@@ -49,46 +33,46 @@
         </div>
       </div>
 
-      <div class="card">
-        <h3>Power Flow (kW)</h3>
-        <canvas id="plot-power"></canvas>
+      <!-- 右侧两张大图：纵向堆叠 -->
+      <div class="area-charts">
+        <div class="charts-stack">
+          <div class="card">
+            <h3>Power (MW) · Window</h3>
+            <canvas id="plot-power" class="plot"></canvas>
+          </div>
+          <div class="card">
+            <h3>Frequency (Hz) / SOC (%) · Window</h3>
+            <canvas id="plot-energy" class="plot"></canvas>
+          </div>
+        </div>
       </div>
 
-      <div class="card">
-        <h3>Energy / Fuel / SOC</h3>
-        <canvas id="plot-energy"></canvas>
+      <!-- 底部指标/日志区 -->
+      <div class="area-metrics">
+        <div class="card">
+          <h3>Metrics & Log</h3>
+          <div class="metrics-grid" id="live-panels">
+            <div class="kv" id="live-metrics"></div>
+            <div class="kv" id="live-state"></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Notes</h3>
+          <p class="muted">本页为展示层；算法由私库构建为 ESM 后通过 CI 同步到 <code>/vendor/core.esm.js</code>。</p>
+        </div>
       </div>
     </div>
-
-    <div class="row">
-      <div class="card">
-        <h3>Live Metrics</h3>
-        <div id="live-metrics" class="kv"></div>
-      </div>
-      <div class="card">
-        <h3>Engine State</h3>
-        <div id="live-state" class="kv"></div>
-      </div>
-      <div class="card">
-        <h3>Notes</h3>
-        <p class="muted">本页为展示层；算法由私库构建为 ESM 后通过 CI 同步到 <code>/vendor/core.esm.js</code>。</p>
-      </div>
-    </div>
-
-    <footer>
-      <div>© EnergizeOS™ — UI & glue open; engine private.</div>
-    </footer>
   </div>
 
   <!-- 装配器：唯一入口 -->
   <script type="module" src="./modules/loader.js"></script>
 
   <!-- 运行失败/依赖缺失的用户可见提示 -->
-  <div id="overlay">
-    <div class="ovl-card">
-      <h3>Simulator loading status</h3>
+  <div id="overlay" style="position:fixed;inset:0;background:rgba(255,255,255,.95);display:none;align-items:center;justify-content:center;z-index:9999">
+    <div class="ovl-card" style="max-width:560px;border:1px solid #e5e7eb;border-radius:14px;background:#fff;padding:18px">
+      <h3 style="margin:0 0 8px">Simulator loading status</h3>
       <div id="overlay-msg" class="muted">Initializing…</div>
-      <pre id="overlay-log" class="kv"></pre>
+      <pre id="overlay-log" class="kv" style="max-height:260px"></pre>
     </div>
   </div>
 </body>
