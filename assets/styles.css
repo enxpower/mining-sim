@@ -1,24 +1,53 @@
-*{box-sizing:border-box}
-body{margin:14px;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans",sans-serif}
-h1{font-size:18px;margin:0}
-.row{display:flex;flex-wrap:wrap;gap:12px;margin:10px 0}
-.card{border:1px solid var(--box);border-radius:10px;padding:12px;background:#fff;flex:1 1 320px}
-.stack{position:relative}
-.kv{font-family:ui-monospace,Menlo,Consolas,monospace}
-.grid{display:grid;grid-template-columns:repeat(2,minmax(160px,1fr));gap:8px}
-label{font-size:12px;display:flex;justify-content:space-between;gap:8px;align-items:center}
-input,select{padding:6px 9px;border:1px solid #cbd5e1;border-radius:8px}
-canvas{width:100%;height:280px;background:#fff;border:1px solid #eee;border-radius:10px;display:block}
-.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-.btn{min-width:108px;height:38px;padding:0 14px;border:1.5px solid var(--btnbd);border-radius:10px;background:var(--btnbg);
-     cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:600;transition:.15s}
-.btn:hover{background:var(--btnhover)} .btn:active{transform:translateY(1px);} .btn.secondary{border-color:#6b7280;color:#333}
-.overlay{position:absolute;inset:8px;display:flex;align-items:center;justify-content:center;background:repeating-linear-gradient(45deg,#f9fafb,#f9fafb 10px,#f3f4f6 10px,#f3f4f6 20px);border:1px dashed #e5e7eb;border-radius:10px;color:#6b7280}
-.overlay .pill{background:#fff;border:1px solid #e5e7eb;border-radius:999px;padding:6px 10px}
-.kpi{display:flex;gap:10px;flex-wrap:wrap}
-.kpi .box{border:1px solid var(--box);border-radius:10px;padding:8px 10px;min-width:150px;background:#fff}
-.kpi .box b{display:block;font-size:12px;color:#374151}
-.kpi .box span{display:block;font-size:18px;margin-top:2px}
-.muted{opacity:.6}
-footer{margin-top:14px;padding:14px;border-top:1px dashed #e5e7eb;color:#6b7280;font-size:13px;display:flex;gap:14px;flex-wrap:wrap;align-items:center;justify-content:space-between}
-footer .social-icons{display:flex;gap:12px}
+/* ---- 基础 ---- */
+:root{
+  --card-border:#e5e7eb; --card-bg:#fff; --ink:#111; --muted:#6b7280;
+  --accent:#0ea5e9; --grid-gap:12px;
+}
+html,body{margin:0;padding:0}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,"Noto Sans",sans-serif;color:var(--ink);background:#fff}
+
+/* 容器与响应式栅格 */
+.container{max-width:1280px;margin:0 auto;padding:14px}
+.grid{
+  display:grid; gap:var(--grid-gap);
+  grid-template-columns: 320px 1fr;           /* 桌面：左侧配置卡 + 右侧内容 */
+  grid-template-areas:
+    "config charts"
+    "metrics metrics";
+}
+@media (max-width: 960px){
+  .grid{
+    grid-template-columns:1fr;                 /* 窄屏：单列 */
+    grid-template-areas:
+      "config"
+      "charts"
+      "metrics";
+  }
+}
+
+.card{border:1px solid var(--card-border); border-radius:12px; background:var(--card-bg); padding:12px}
+.card h3{margin:0 0 8px}
+
+/* 版块区域 */
+.area-config{grid-area:config}
+.area-charts{grid-area:charts; display:grid; gap:var(--grid-gap)}
+.area-metrics{grid-area:metrics}
+
+/* 两张大图：上下各一张 */
+.charts-stack{
+  display:grid; gap:var(--grid-gap);
+  grid-template-rows: 360px 260px;            /* 上：功率；下：频率/SOC */
+}
+canvas.plot{width:100%;height:100%; background:#fafafa;border:1px dashed #eee;border-radius:10px}
+
+/* 底部指标区，做一个 4~6 列自适应 */
+.metrics-grid{
+  display:grid; gap:var(--grid-gap);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.kv{font-family:ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
+    background:#0b1021;color:#d1e4ff;border-radius:10px;padding:10px;overflow:auto;max-height:220px;font-size:12px}
+.muted{color:var(--muted);font-size:12px}
+
+/* 头部右上角状态 */
+#engine-version{color:var(--muted)}
